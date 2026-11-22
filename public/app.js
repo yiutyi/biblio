@@ -1488,6 +1488,10 @@ class BiblioApp {
     // status bar so the grid gets every available pixel; any upward scroll
     // brings them straight back.
     trackChrome(scrollTop) {
+        if (this._pinning) {
+            this._chromeScrollTop = scrollTop;
+            return;
+        }
         const last = this._chromeScrollTop || 0;
         const delta = scrollTop - last;
         this._chromeScrollTop = scrollTop;
@@ -1523,13 +1527,11 @@ class BiblioApp {
 
         // Add selected class to appropriate element
         if (this.currentViewMode === 'grid') {
-            // For grid view, try to find the element that was clicked
-            if (event && event.target) {
-                const bookItem = event.target.closest('.book-item');
-                if (bookItem) {
-                    bookItem.classList.add('selected');
-                }
-            }
+            const clicked = (typeof event !== 'undefined' && event && event.target)
+                ? event.target.closest('.book-item')
+                : null;
+            const target = clicked || document.querySelector(`.book-item[data-book-id="${book.id}"]`);
+            if (target) target.classList.add('selected');
         } else if (this.currentViewMode === 'table') {
             // For table view, find and highlight the row
             const selectedRow = document.querySelector(`tr[data-book-id="${book.id}"][data-library-id="${this.selectedBookLibraryId}"]`);
@@ -1540,10 +1542,52 @@ class BiblioApp {
 
         // Details slide in as a side peek whenever a book is picked;
         // the filter drawer gets out of the way.
+        const panel = document.querySelector('.right-panel');
+        const wasOpen = !!(panel && panel.classList.contains('open'));
+        const tile = (this.currentViewMode === 'grid' && this.selectedBookId)
+            ? document.querySelector(`.book-item[data-book-id="${book.id}"]`)
+            : null;
+        // measure before the width transition begins to move the grid
+        const anchorTop = tile ? tile.getBoundingClientRect().top : null;
         document.querySelector('.left-panel')?.classList.remove('open');
-        document.querySelector('.right-panel')?.classList.add('open');
+        panel?.classList.add('open');
 
         this.renderBookDetails(book);
+        if (tile && !wasOpen) this.pinClickedBook(book, tile, anchorTop);
+    }
+
+    // Opening the details pane steals 360px, so the shelf re-flows (9 -> 7
+    // columns) and the card the reader just clicked can jump several rows.
+    // Anchor it: on every frame of the width animation nudge the scroll back
+    // so the card stays under the cursor, then make sure it is still on screen.
+    pinClickedBook(book, item, anchorTop) {
+        if (this.currentViewMode !== 'grid') return;
+        const grid = document.getElementById('booksGrid');
+        if (!grid || !item || anchorTop == null || !item.isConnected) return;
+
+        const anchor = anchorTop;
+        const started = performance.now();
+        this._pinning = true;
+        const step = () => {
+            if (!item.isConnected) { this._pinning = false; return; }
+            const dy = item.getBoundingClientRect().top - anchor;
+            if (Math.abs(dy) > 0.5) grid.scrollTop += dy;
+            if (performance.now() - started < 340) {
+                requestAnimationFrame(step);
+                return;
+            }
+            this._pinning = false;
+            this._chromeScrollTop = grid.scrollTop;
+            // nudge just enough to keep the whole card on screen, never jump a row
+            const r = item.getBoundingClientRect();
+            const gr = grid.getBoundingClientRect();
+            if (r.top < gr.top + 8) {
+                grid.scrollTop -= (gr.top + 8 - r.top);
+            } else if (r.bottom > gr.bottom - 8) {
+                grid.scrollTop += (r.bottom - gr.bottom + 8);
+            }
+        };
+        requestAnimationFrame(step);
     }
 
     async restoreSelectedBook() {
