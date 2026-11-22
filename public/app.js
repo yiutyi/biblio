@@ -1736,7 +1736,7 @@ class BiblioApp {
         coverImage.style.display = 'block';
 
         // Re-scroll the panel to the top for a newly selected book
-        const rightPanel = document.querySelector('.right-panel');
+        const rightPanel = document.querySelector('.right-inner');
         if (rightPanel) rightPanel.scrollTop = 0;
 
         this.loadAndDisplayFormats(book.id);

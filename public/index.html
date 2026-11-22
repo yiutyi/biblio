@@ -320,9 +320,9 @@ svg {
     position: relative;
 }
 
-/* Both side panels are side-peek overlays: hidden by default, slide in on demand. */
-.left-panel,
-.right-panel {
+/* The filter drawer is still a side-peek overlay; the details pane is a
+   docked column that takes its own width so it never covers a single cover. */
+.left-panel {
     position: absolute;
     top: 0;
     bottom: 0;
@@ -345,18 +345,38 @@ svg {
     transform: translateX(-102%);
 }
 
-.right-panel {
-    right: 0;
-    width: 360px;
-    border-left: 1px solid var(--line);
-    transform: translateX(102%);
-}
-
-.left-panel.open,
-.right-panel.open {
+.left-panel.open {
     transform: none;
     opacity: 1;
     visibility: visible;
+}
+
+.right-panel {
+    --right-w: 360px;
+    position: relative;
+    flex: 0 0 auto;
+    width: 0;
+    min-width: 0;
+    z-index: 5;
+    background: var(--surface);
+    border-left: 0 solid var(--line);
+    overflow: hidden;
+    transition: width .26s cubic-bezier(.2, .7, .3, 1), border-left-width .26s;
+}
+
+.right-panel.open {
+    width: var(--right-w);
+    border-left-width: 1px;
+}
+
+/* Fixed-width inner sheet: the column animates, its contents do not reflow */
+.right-inner {
+    position: relative;
+    width: var(--right-w);
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
 }
 
 .splitter {
@@ -1904,7 +1924,7 @@ body:has(.left-panel.open) #drawerScrim {
 
 @media (max-width: 1180px) {
     .right-panel {
-        width: 330px;
+        --right-w: 330px;
     }
 }
 
@@ -1925,8 +1945,27 @@ body:has(.left-panel.open) #drawerScrim {
         width: 280px;
     }
 
+    /* Too narrow to dock: on phones the details go back to being an overlay. */
     .right-panel {
-        width: min(360px, 88vw);
+        --right-w: min(360px, 88vw);
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: var(--right-w);
+        transform: translateX(102%);
+        opacity: 0;
+        visibility: hidden;
+        box-shadow: var(--shadow-3);
+        border-left: 1px solid var(--line);
+        transition: transform .26s cubic-bezier(.2, .7, .3, 1), opacity .18s ease, visibility .26s;
+    }
+
+    .right-panel.open {
+        width: var(--right-w);
+        transform: none;
+        opacity: 1;
+        visibility: visible;
     }
 
     body:has(.right-panel.open) #drawerScrim {
@@ -2393,6 +2432,7 @@ body.chrome-collapsed .bottom-panel {
 
     <!-- Details -->
     <aside class="right-panel">
+        <div class="right-inner">
         <button class="panel-close" title="Close details" aria-label="Close details"
             onclick="document.querySelector('.right-panel').classList.remove('open')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
@@ -2463,6 +2503,7 @@ body.chrome-collapsed .bottom-panel {
                 <div id="detailComments"></div>
             </div>
         </div>
+        </div>
     </aside>
 </div>
 
@@ -2529,7 +2570,7 @@ document.addEventListener('keydown', function (e) {
     }
 });
 </script>
-<script src="app.js?v=40"></script>
+<script src="app.js?v=41"></script>
 </body>
 
 </html>
