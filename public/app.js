@@ -1318,13 +1318,28 @@ class BiblioApp {
             img.decoding = 'async';
             img.alt = book.title || 'Cover';
             const firstAuthor = (book.authors && book.authors.length > 0) ? book.authors[0] : 'Unknown';
+            const coverUrl = `/api/libraries/${this.currentLibraryId}/books/${book.id}/cover`;
             const fallbackCover = () => {
                 img.onerror = null;
                 img.src = this.generateTemporaryCover(book.title, firstAuthor);
             };
             if (book.has_cover) {
-                img.onerror = fallbackCover;
-                img.src = `/api/libraries/${this.currentLibraryId}/books/${book.id}/cover`;
+                // One quiet retry before giving up. A mass first-paint batch
+                // occasionally drops a request, and a permanent placeholder
+                // would then contradict the details pane for the same book.
+                img.onerror = () => {
+                    if (!img.isConnected) return;
+                    if (!img.dataset.retried) {
+                        img.dataset.retried = '1';
+                        setTimeout(() => {
+                            if (!img.isConnected) return;
+                            img.src = `${coverUrl}?retry=1`;
+                        }, 700);
+                    } else {
+                        fallbackCover();
+                    }
+                };
+                img.src = coverUrl;
             } else {
                 img.src = this.generateTemporaryCover(book.title, firstAuthor);
             }
@@ -1712,10 +1727,25 @@ class BiblioApp {
         coverImage.onload = () => {
             if (coverSeq !== this._coverSeq) return;
             coverImage.classList.remove('is-loading');
+            // If the grid tile for this book had given up and painted a
+            // generated plate, repair it now that the server answered.
+            if (!coverImage.src.startsWith('data:')) {
+                const tile = document.querySelector(`.book-item[data-book-id="${book.id}"] img`);
+                if (tile && tile.src.startsWith('data:')) {
+                    tile.dataset.retried = '1';
+                    tile.src = coverImage.src.split('?')[0];
+                }
+            }
         };
         if (book.has_cover) {
+            let retried = false;
             coverImage.onerror = () => {
                 if (coverSeq !== this._coverSeq) return;
+                if (!retried) {
+                    retried = true;
+                    coverImage.src = `${base}?retry=1`;
+                    return;
+                }
                 coverImage.onerror = null;
                 coverImage.src = generatedCover();
             };
