@@ -1753,6 +1753,187 @@ class BiblioApp {
     // A hand-set "paper plate" for books Calibre has no artwork for: warm paper,
     // a gold rule, serif title and a small author line. Deterministic per title
     // and cached, so a 300-book grid never redraws the same cover twice.
+    // Faint ornamental tissue printed behind the title. Ten motifs, each with
+    // randomised spacing/angle/scale, all derived from the title hash so the
+    // same book always gets the same ornament while no two titles collide.
+    paintCoverPattern(ctx, W, H, hash, plate) {
+        const pat = document.createElement('canvas');
+        pat.width = W;
+        pat.height = H;
+        const p = pat.getContext('2d');
+
+        let seed = (hash >>> 0) || 7;
+        const rnd = () => {
+            seed = (seed * 1103515245 + 12345) >>> 0;
+            return (seed >>> 8) / 16777216;
+        };
+
+        const style = hash % 10;
+        p.strokeStyle = plate.rule;
+        p.fillStyle = plate.rule;
+        p.lineWidth = 1;
+        p.globalAlpha = .55;
+
+        if (style === 0) {
+            // diagonal hatch with a random rake
+            const step = 9 + Math.floor(rnd() * 9);
+            p.save();
+            p.translate(W / 2, H / 2);
+            p.rotate(-0.32 - rnd() * 0.55);
+            for (let i = -H * 1.4; i < H * 1.4; i += step) {
+                p.beginPath();
+                p.moveTo(-W, i);
+                p.lineTo(W, i);
+                p.stroke();
+            }
+            p.restore();
+        } else if (style === 1) {
+            // concentric rings growing out of one corner
+            const cx = rnd() < 0.5 ? 0 : W;
+            const cy = rnd() < 0.5 ? 0 : H;
+            const step = 13 + Math.floor(rnd() * 10);
+            for (let r = step; r < Math.hypot(W, H) * 1.15; r += step) {
+                p.beginPath();
+                p.arc(cx, cy, r, 0, Math.PI * 2);
+                p.stroke();
+            }
+        } else if (style === 2) {
+            // halftone dot screen, staggered rows
+            const step = 13 + Math.floor(rnd() * 8);
+            const off = step / 2;
+            let row = 0;
+            for (let y = 0; y < H + step; y += step, row++) {
+                for (let x = row % 2 ? off : 0; x < W + step; x += step) {
+                    const r = 1.1 + rnd() * 1.5;
+                    p.beginPath();
+                    p.arc(x, y, r, 0, Math.PI * 2);
+                    p.fill();
+                }
+            }
+        } else if (style === 3) {
+            // scattered leaves with a vein
+            const n = 26 + Math.floor(rnd() * 16);
+            for (let i = 0; i < n; i++) {
+                const x = rnd() * W;
+                const y = H * 0.42 + rnd() * H * 0.62;
+                const r = 7 + rnd() * 11;
+                p.save();
+                p.translate(x, y);
+                p.rotate(rnd() * Math.PI);
+                p.beginPath();
+                p.ellipse(0, 0, r, r * 0.4, 0, 0, Math.PI * 2);
+                p.stroke();
+                p.beginPath();
+                p.moveTo(-r, 0);
+                p.lineTo(r, 0);
+                p.stroke();
+                p.restore();
+            }
+        } else if (style === 4) {
+            // stacked sine waves
+            const rows = 7 + Math.floor(rnd() * 5);
+            const gap = H / (rows + 2);
+            const amp = 5 + rnd() * 9;
+            const freq = 0.011 + rnd() * 0.012;
+            for (let r = 0; r < rows; r++) {
+                const baseY = gap * (r + 2);
+                p.beginPath();
+                for (let x = 0; x <= W; x += 4) {
+                    const y = baseY + Math.sin(x * freq + r * 1.3) * amp;
+                    if (x === 0) p.moveTo(x, y); else p.lineTo(x, y);
+                }
+                p.stroke();
+            }
+        } else if (style === 5) {
+            // art-deco fan rising from the base
+            const cx = W / 2;
+            const cy = H * 1.04;
+            const rays = 20 + Math.floor(rnd() * 12);
+            const len = H * (0.62 + rnd() * 0.28);
+            for (let i = 0; i <= rays; i++) {
+                const a = Math.PI - (Math.PI * i) / rays;
+                p.beginPath();
+                p.moveTo(cx, cy);
+                p.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len * 0.92);
+                p.stroke();
+            }
+        } else if (style === 6) {
+            // loose overlapping circles
+            const n = 9 + Math.floor(rnd() * 7);
+            for (let i = 0; i < n; i++) {
+                const x = -W * 0.3 + rnd() * W * 1.6;
+                const y = H * 0.35 + rnd() * H * 0.75;
+                const r = 40 + rnd() * 90;
+                p.beginPath();
+                p.arc(x, y, r, 0, Math.PI * 2);
+                p.stroke();
+            }
+        } else if (style === 7) {
+            // rotated diamond lattice
+            const step = 22 + Math.floor(rnd() * 16);
+            const size = 5 + rnd() * 6;
+            p.save();
+            p.translate(W / 2, H / 2);
+            p.rotate(Math.PI / 4);
+            for (let y = -H; y < H; y += step) {
+                for (let x = -W; x < W; x += step) {
+                    p.beginPath();
+                    p.moveTo(x - size, y);
+                    p.lineTo(x, y - size);
+                    p.lineTo(x + size, y);
+                    p.lineTo(x, y + size);
+                    p.closePath();
+                    p.stroke();
+                }
+            }
+            p.restore();
+        } else if (style === 8) {
+            // pinstripes of alternating weight
+            let x = 0;
+            while (x < W) {
+                const gap = 6 + rnd() * 16;
+                p.lineWidth = rnd() < 0.25 ? 2 : 1;
+                p.beginPath();
+                p.moveTo(x, 0);
+                p.lineTo(x, H);
+                p.stroke();
+                x += gap;
+            }
+            p.lineWidth = 1;
+        } else {
+            // scallop tiles
+            const r = 16 + rnd() * 12;
+            const stepX = r * 1.8;
+            const stepY = r * 0.9;
+            let row = 0;
+            for (let y = H * 0.4; y < H + r; y += stepY, row++) {
+                for (let x = row % 2 ? 0 : stepX / 2; x < W + stepX; x += stepX) {
+                    p.beginPath();
+                    p.arc(x, y, r, Math.PI, Math.PI * 2);
+                    p.stroke();
+                }
+            }
+        }
+
+        // Mask the tissue away from the title block: a whisper at the top edge,
+        // nothing behind the words, full strength over the lower third.
+        const mask = p.createLinearGradient(0, 0, 0, H);
+        mask.addColorStop(0, 'rgba(0,0,0,0.30)');
+        mask.addColorStop(0.13, 'rgba(0,0,0,0)');
+        mask.addColorStop(0.66, 'rgba(0,0,0,0)');
+        mask.addColorStop(0.80, 'rgba(0,0,0,0.9)');
+        mask.addColorStop(1, 'rgba(0,0,0,1)');
+        p.globalCompositeOperation = 'destination-in';
+        p.globalAlpha = 1;
+        p.fillStyle = mask;
+        p.fillRect(0, 0, W, H);
+
+        const wasAlpha = ctx.globalAlpha;
+        ctx.globalAlpha = .42;
+        ctx.drawImage(pat, 0, 0);
+        ctx.globalAlpha = wasAlpha;
+    }
+
     generateTemporaryCover(title, author) {
         const cleanTitle = (title || 'Untitled').trim();
         const cleanAuthor = (author || '').trim();
@@ -1797,6 +1978,9 @@ class BiblioApp {
         spine.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.fillStyle = spine;
         ctx.fillRect(0, 0, 24, H);
+
+        // printed tissue, then the gold frame sits on top of it
+        this.paintCoverPattern(ctx, W, H, hash, plate);
 
         ctx.globalAlpha = .45;
         ctx.strokeStyle = plate.rule;
