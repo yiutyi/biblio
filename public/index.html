@@ -2,798 +2,2482 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Biblio - E-book Library Browser</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background-color: #f5f5f5;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-
-        /* Top Panel - Command Bar */
-        .top-panel {
-            background-color: #2c3e50;
-            color: white;
-            padding: 12px 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            flex-wrap: wrap;
-        }
-
-        .top-panel h1 {
-            font-size: 18px;
-            margin-right: auto;
-        }
-
-        .top-panel button {
-            background-color: #3498db;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background-color 0.3s;
-        }
-
-        .top-panel button:hover {
-            background-color: #2980b9;
-        }
-
-        .top-panel button:active {
-            background-color: #1f618d;
-        }
-
-        /* Main Content Area */
-        .content-area {
-            display: flex;
-            flex: 1;
-            gap: 4px;
-            padding: 6px;
-            overflow: hidden;
-        }
-
-        /* Left Panel - Filters */
-        .left-panel {
-            width: 250px;
-            background-color: white;
-            border-radius: 4px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-            overflow-y: auto;
-            padding: 15px;
-            flex-shrink: 0;
-        }
-
-        /* Splitter Styles */
-        .splitter {
-            width: 8px;
-            background-color: #d0d0d0;
-            cursor: col-resize;
-            transition: background-color 0.2s;
-            flex-shrink: 0;
-            user-select: none;
-            -webkit-user-select: none;
-            -moz-user-select: none;
-            -ms-user-select: none;
-        }
-
-        .splitter:hover {
-            background-color: #999;
-        }
-
-        .splitter.active {
-            background-color: #3498db;
-        }
-
-        .filter-section {
-            margin-bottom: 0;
-            border-bottom: 1px solid #ecf0f1;
-        }
-
-        .filter-section-header {
-            font-size: 14px;
-            font-weight: 600;
-            color: #2c3e50;
-            padding: 12px 0;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            user-select: none;
-        }
-
-        .filter-section-header:hover {
-            background-color: #f9f9f9;
-            padding: 12px 5px;
-            margin: 0 -5px;
-            border-radius: 3px;
-        }
-
-        .filter-section-toggle {
-            display: inline-block;
-            transition: transform 0.2s;
-            font-size: 12px;
-        }
-
-        .filter-section-toggle.collapsed {
-            transform: rotate(-90deg);
-        }
-
-        .filter-section-content {
-            max-height: 500px;
-            overflow: hidden;
-            transition: max-height 0.3s ease, padding 0.3s ease;
-            padding-bottom: 12px;
-        }
-
-        .filter-section-content.collapsed {
-            max-height: 0;
-            padding-bottom: 0;
-            overflow: hidden;
-        }
-
-        .filter-item {
-            display: flex;
-            align-items: center;
-            padding: 6px 0;
-            font-size: 13px;
-        }
-
-        .filter-item input[type="checkbox"],
-        .filter-item input[type="radio"] {
-            margin-right: 8px;
-            cursor: pointer;
-        }
-
-        .filter-item label {
-            cursor: pointer;
-            flex: 1;
-        }
-
-        /* Center Panel - Books Grid */
-        .center-panel {
-            flex: 1;
-            min-width: 200px;
-            background-color: white;
-            border-radius: 4px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .books-toolbar {
-            padding: 10px 15px;
-            border-bottom: 1px solid #ecf0f1;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .books-toolbar select {
-            padding: 6px 10px;
-            border: 1px solid #bdc3c7;
-            border-radius: 4px;
-            font-size: 13px;
-        }
-
-        .books-grid {
-            flex: 1;
-            overflow-y: auto;
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(var(--cover-width, 140px), 1fr));
-            gap: var(--item-gap, 15px);
-            padding: var(--grid-padding, 15px);
-            align-content: start;
-        }
-
-        .book-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .book-item:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        }
-
-        .book-cover {
-            width: var(--cover-width, 120px);
-            height: calc(var(--cover-width, 120px) * 1.333);
-            background-color: transparent;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-            margin-bottom: var(--cover-margin, 8px);
-            border: 1px solid #bdc3c7;
-            transition: width 0.1s, height 0.1s, margin-bottom 0.1s;
-        }
-
-        .book-cover img {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            object-position: center;
-        }
-
-        .book-cover.no-image {
-            color: #95a5a6;
-            font-size: 12px;
-            text-align: center;
-            padding: 10px;
-        }
-
-        .book-title {
-            font-size: var(--title-font-size, 12px);
-            font-weight: 500;
-            text-align: center;
-            color: #2c3e50;
-            width: var(--cover-width, 120px);
-            display: -webkit-box;
-            -webkit-line-clamp: var(--title-lines, 2);
-            line-clamp: var(--title-lines, 2);
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-            transition: width 0.1s, font-size 0.1s, -webkit-line-clamp 0.1s, line-clamp 0.1s;
-            line-height: 1.3;
-        }
-
-        .book-item.selected .book-cover {
-            border: 3px solid #3498db;
-        }
-
-        /* Right Panel - Book Details */
-        .right-panel {
-            width: 300px;
-            background-color: white;
-            border-radius: 4px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-            overflow-y: auto;
-            padding: 15px;
-            flex-shrink: 0;
-            flex-basis: 300px;
-        }
-
-        .details-content {
-            display: none;
-        }
-
-        .details-content.active {
-            display: block;
-        }
-
-        .no-selection {
-            text-align: center;
-            color: #95a5a6;
-            padding: 40px 10px;
-            font-size: 14px;
-        }
-
-        .detail-section {
-            margin-bottom: 15px;
-            display: flex;
-            flex-wrap: wrap;
-            align-items: baseline;
-            gap: 4px;
-        }
-
-        .detail-label {
-            font-weight: 900;
-            font-size: 12px;
-            color: #7f8c8d;
-            text-transform: uppercase;
-            display: inline;
-        }
-
-        .detail-value {
-            font-size: 14px;
-            color: #2c3e50;
-            line-height: 1.4;
-            display: inline;
-            flex: 1;
-        }
-
-        #detailComments {
-            display: block !important;
-            margin-top: 4px;
-            width: 100%;
-            font-size: 13px;
-            max-height: 150px;
-            overflow-y: auto;
-        }
-
-        .detail-value a {
-            color: white;
-            text-decoration: none;
-        }
-
-        .detail-value a:hover {
-            text-decoration: underline;
-        }
-
-        .format-button {
-            display: inline-block;
-            padding: 6px 12px;
-            background-color: #3498db;
-            color: white;
-            text-decoration: none;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 600;
-            transition: background-color 0.3s;
-        }
-
-        .format-button:hover {
-            background-color: #2980b9;
-        }
-
-        .format-button:active {
-            background-color: #1f618d;
-        }
-
-        .no-formats {
-            font-size: 12px;
-            color: #95a5a6;
-        }
-
-        /* Bottom Panel - Status Bar */
-        .bottom-panel {
-            background-color: #ecf0f1;
-            color: #2c3e50;
-            padding: 8px 20px;
-            border-top: 1px solid #bdc3c7;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 12px;
-            flex-shrink: 0;
-        }
-
-        .status-left {
-            display: flex;
-            gap: 20px;
-        }
-
-        .status-item {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .status-item input[type="radio"] {
-            margin-right: 4px;
-            cursor: pointer;
-        }
-
-        .status-item label {
-            cursor: pointer;
-            margin-right: 8px;
-        }
-
-        /* Table View Styles */
-        .books-table {
-            flex: 1;
-            overflow: auto;
-            display: flex;
-            flex-direction: column;
-            background-color: #fff;
-        }
-
-        .books-table table {
-            width: 100%;
-            border-collapse: collapse;
-            background-color: #fff;
-            table-layout: fixed;
-        }
-
-        .books-table thead {
-            position: sticky;
-            top: 0;
-            background-color: #f5f5f5;
-            z-index: 10;
-        }
-
-        .books-table th {
-            border: 1px solid #ddd;
-            padding: 8px 6px;
-            text-align: left;
-            font-weight: 500;
-            font-size: 12px;
-            user-select: none;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .books-table th.resizable-col {
-            padding-right: 2px;
-        }
-
-        .books-table th .col-resize {
-            position: absolute;
-            right: 0;
-            top: 0;
-            bottom: 0;
-            width: 6px;
-            cursor: col-resize;
-            user-select: none;
-            background-color: transparent;
-        }
-
-        .books-table th .col-resize:hover {
-            background-color: #3498db;
-        }
-
-        .books-table tbody tr {
-            border-bottom: 1px solid #eee;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        .books-table tbody tr:hover {
-            background-color: #f9f9f9;
-        }
-
-        .books-table tbody tr.selected {
-            background-color: #e3f2fd;
-        }
-
-        .books-table td {
-            border: 1px solid #eee;
-            padding: 8px 12px;
-            font-size: 12px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .books-table tbody tr:hover td {
-            background-color: #f9f9f9;
-        }
-
-        .books-table tbody tr.selected td {
-            background-color: #e3f2fd;
-        }
-
-        /* Scrollbar styling */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: #ecf0f1;
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #bdc3c7;
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: #95a5a6;
-        }
-
-        /* Loading state */
-        .loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            color: #7f8c8d;
-            font-size: 14px;
-        }
-
-        .spinner {
-            border: 2px solid #ecf0f1;
-            border-top: 2px solid #3498db;
-            border-radius: 50%;
-            width: 16px;
-            height: 16px;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
-                transform: rotate(360deg);
-            }
-        }
-
-        /* Responsive design */
-        @media (max-width: 600px) {
-            .content-area {
-                flex-direction: column;
-            }
-
-            .left-panel,
-            .right-panel {
-                width: 100%;
-                max-height: 200px;
-            }
-
-            .books-grid {
-                grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-            }
-
-            .book-cover {
-                width: 90px;
-                height: 120px;
-            }
-
-            .book-title {
-                width: 90px;
-                font-size: 11px;
-            }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Biblio — Library</title>
+<style>
+/* ============================================================
+   Design tokens
+   ============================================================ */
+:root {
+    --bg: #F4F2ED;
+    --surface: #FFFFFF;
+    --surface-2: #FAF9F6;
+    --surface-3: #F1EEE7;
+    --ink: #191A1C;
+    --ink-2: #4B4E54;
+    --muted: #8A8C92;
+    --line: #E5E1D8;
+    --line-soft: #EFECE5;
+    --accent: #0E7A67;
+    --accent-ink: #0A5A4C;
+    --accent-soft: #E6F1EE;
+    --gold: #B8863B;
+    --danger: #B4453C;
+    --cover-bg: #EDEAE3;
+
+    --r-sm: 6px;
+    --r: 10px;
+    --r-lg: 14px;
+
+    --shadow-1: 0 1px 2px rgba(24, 26, 28, .05), 0 1px 3px rgba(24, 26, 28, .04);
+    --shadow-2: 0 8px 22px -12px rgba(24, 26, 28, .28), 0 2px 6px rgba(24, 26, 28, .05);
+    --shadow-3: 0 18px 40px -18px rgba(24, 26, 28, .45), 0 4px 10px rgba(24, 26, 28, .06);
+
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    --serif: ui-serif, Georgia, "Times New Roman", "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+
+    --bar-h: 58px;
+    --status-h: 34px;
+
+    color-scheme: light;
+}
+
+[data-theme="dark"] {
+    --bg: #0D0E11;
+    --surface: #15171B;
+    --surface-2: #1B1E23;
+    --surface-3: #23272C;
+    --ink: #F0F1F3;
+    --ink-2: #B4B8BF;
+    --muted: #868C95;
+    --line: #292D33;
+    --line-soft: #1F2227;
+    --accent: #4FBFA8;
+    --accent-ink: #7BD3C1;
+    --accent-soft: #1B3833;
+    --gold: #D3A45E;
+    --danger: #E0796F;
+    --cover-bg: #212429;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-2: 0 10px 26px -14px rgba(0, 0, 0, .8), 0 2px 6px rgba(0, 0, 0, .35);
+    --shadow-3: 0 22px 48px -20px rgba(0, 0, 0, .9);
+
+    color-scheme: dark;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+}
+
+body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+button,
+input,
+select {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+}
+
+button {
+    cursor: pointer;
+    border: none;
+    background: none;
+}
+
+input:focus-visible,
+button:focus-visible,
+select:focus-visible,
+a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+svg {
+    display: block;
+}
+
+/* ============================================================
+   App bar
+   ============================================================ */
+.app-bar {
+    height: var(--bar-h);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 0 16px 0 18px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    position: relative;
+    z-index: 30;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.brand-mark {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(160deg, var(--accent), var(--accent-ink));
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(14, 122, 103, .28);
+    flex-shrink: 0;
+}
+
+.brand-txt {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+    min-width: 0;
+}
+
+.brand-name {
+    font-family: var(--serif);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: .01em;
+}
+
+.brand-sub {
+    font-size: 10.5px;
+    color: var(--muted);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+}
+
+.search-box {
+    flex: 1;
+    max-width: 560px;
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.search-box .search-ico {
+    position: absolute;
+    left: 11px;
+    color: var(--muted);
+    pointer-events: none;
+}
+
+#searchInput {
+    width: 100%;
+    height: 34px;
+    padding: 0 64px 0 34px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink);
+    font-size: 13px;
+    transition: border-color .15s, background .15s, box-shadow .15s;
+}
+
+#searchInput::placeholder {
+    color: var(--muted);
+}
+
+#searchInput:hover {
+    border-color: var(--surface-3);
+    background: var(--surface-3);
+}
+
+#searchInput:focus {
+    outline: none;
+    background: var(--surface);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-kbd {
+    position: absolute;
+    right: 10px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 1px 5px;
+    background: var(--surface);
+    pointer-events: none;
+}
+
+#clearSearchBtn {
+    position: absolute;
+    right: 34px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    background: var(--surface-3);
+}
+
+#clearSearchBtn:hover {
+    color: var(--ink);
+    background: var(--line);
+}
+
+.app-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.icon-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-2);
+    transition: background .15s, color .15s;
+}
+
+.icon-btn:hover {
+    background: var(--surface-3);
+    color: var(--ink);
+}
+
+.icon-btn:active {
+    transform: scale(.96);
+}
+
+#userInfo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 10px;
+    margin-left: 2px;
+    border-left: 1px solid var(--line);
+}
+
+#userInfo .u-name {
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+#userInfo .u-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-weight: 600;
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-transform: uppercase;
+}
+
+/* ============================================================
+   Layout
+   ============================================================ */
+.content-area {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    background: var(--bg);
+    min-height: 0;
+    position: relative;
+}
+
+/* Both side panels are side-peek overlays: hidden by default, slide in on demand. */
+.left-panel,
+.right-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 20;
+    background: var(--surface);
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    box-shadow: var(--shadow-3);
+    opacity: 0;
+    visibility: hidden;
+    transition: transform .26s cubic-bezier(.2, .7, .3, 1), opacity .18s ease, visibility .26s;
+}
+
+.left-panel {
+    left: 0;
+    width: 286px;
+    padding: 10px 10px 28px;
+    border-right: 1px solid var(--line);
+    transform: translateX(-102%);
+}
+
+.right-panel {
+    right: 0;
+    width: 360px;
+    border-left: 1px solid var(--line);
+    transform: translateX(102%);
+}
+
+.left-panel.open,
+.right-panel.open {
+    transform: none;
+    opacity: 1;
+    visibility: visible;
+}
+
+.splitter {
+    display: none;
+}
+
+.center-panel {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ============================================================
+   Sidebar filter sections
+   ============================================================ */
+.panel-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px 12px;
+    font-size: 10.5px;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+}
+
+.panel-title button {
+    font-size: 11px;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--muted);
+    padding: 2px 6px;
+    border-radius: 5px;
+}
+
+.panel-title button:hover {
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+}
+
+.fsec {
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.fsec:last-child {
+    border-bottom: none;
+}
+
+.filter-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 8px;
+    cursor: pointer;
+    border-radius: var(--r-sm);
+    user-select: none;
+}
+
+.filter-section-header:hover {
+    background: var(--surface-2);
+}
+
+.fsec-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: .01em;
+}
+
+.fsec-total {
+    font-size: 10.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.fsec-badge:empty {
+    display: none;
+}
+
+.fsec-badge {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    border-radius: 999px;
+    padding: 1px 6px;
+    font-variant-numeric: tabular-nums;
+}
+
+.sec-clear {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--muted);
+    padding: 2px 6px;
+    border-radius: 5px;
+    opacity: 0;
+    transition: opacity .15s;
+}
+
+.filter-section-header:hover .sec-clear,
+.sec-clear:focus-visible {
+    opacity: 1;
+}
+
+.sec-clear:hover {
+    color: var(--danger);
+}
+
+.filter-section-toggle {
+    color: var(--muted);
+    transition: transform .18s ease;
+    flex-shrink: 0;
+    width: 14px;
+    display: flex;
+    justify-content: center;
+}
+
+.filter-section-toggle.collapsed {
+    transform: rotate(-90deg);
+}
+
+.filter-section-content {
+    padding: 0 2px 10px;
+}
+
+.filter-section-content.collapsed {
+    display: none;
+}
+
+.fsec-search {
+    position: relative;
+    margin: 2px 6px 8px;
+}
+
+.fsec-search input {
+    width: 100%;
+    height: 28px;
+    border-radius: 7px;
+    border: 1px solid var(--line-soft);
+    background: var(--surface-2);
+    padding: 0 26px 0 28px;
+    font-size: 12px;
+    color: var(--ink);
+}
+
+.fsec-search input::placeholder {
+    color: var(--muted);
+}
+
+.fsec-search input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.fsec-search .fs-ico {
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    pointer-events: none;
+}
+
+.fsec-body {
+    max-height: none;
+}
+
+.filter-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 5px 8px;
+    border-radius: 7px;
+    cursor: pointer;
+    min-height: 28px;
+}
+
+.filter-item:hover {
+    background: var(--surface-2);
+}
+
+.filter-item input[type="checkbox"],
+.filter-item input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 15px;
+    height: 15px;
+    flex: 0 0 15px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--surface);
+    position: relative;
+    cursor: pointer;
+    transition: border-color .12s, background .12s;
+}
+
+.filter-item input[type="radio"] {
+    border-radius: 50%;
+}
+
+.filter-item input:hover {
+    border-color: var(--accent);
+}
+
+.filter-item input:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.filter-item input[type="checkbox"]:checked::after {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 5px;
+    height: 8px;
+    border: 2px solid #fff;
+    border-top: 0;
+    border-left: 0;
+    transform: rotate(42deg);
+}
+
+.filter-item input[type="radio"]:checked::after {
+    content: "";
+    position: absolute;
+    inset: 3.5px;
+    border-radius: 50%;
+    background: #fff;
+}
+
+.filter-item label {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    line-height: 1.35;
+}
+
+.filter-item input:checked+label .fx-name {
+    color: var(--ink);
+    font-weight: 500;
+}
+
+.fx-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fx-count {
+    font-size: 10.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.filter-group {
+    margin-bottom: 2px;
+}
+
+.filter-group-header,
+.author-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 8px;
+    cursor: pointer;
+    border-radius: 7px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    color: var(--muted);
+    text-transform: uppercase;
+    user-select: none;
+}
+
+.filter-group-header:hover,
+.author-group-header:hover {
+    background: var(--surface-2);
+    color: var(--ink-2);
+}
+
+.filter-group-header span:first-child,
+.author-group-header span:first-child {
+    font-variant-numeric: tabular-nums;
+}
+
+.filter-group-content,
+.author-group-content {
+    padding-left: 4px;
+}
+
+.fsec-more {
+    width: 100%;
+    text-align: left;
+    padding: 6px 8px;
+    font-size: 11.5px;
+    color: var(--accent-ink);
+    border-radius: 6px;
+}
+
+.fsec-more:hover {
+    background: var(--accent-soft);
+}
+
+.fsec-empty {
+    padding: 10px 8px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+/* ============================================================
+   Toolbar
+   ============================================================ */
+.books-toolbar {
+    flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+}
+
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+
+.chips-empty {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 6px 0 9px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--ink-2);
+    font-size: 11.5px;
+    max-width: 240px;
+    transition: border-color .15s, background .15s;
+}
+
+.chip:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+}
+
+.chip span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chip .chip-x {
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+}
+
+.chip:hover .chip-x {
+    color: var(--accent-ink);
+}
+
+.chip-clear {
+    padding: 0 9px;
+    border-style: dashed;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.chip-clear:hover {
+    border-color: var(--danger);
+    background: transparent;
+    color: var(--danger);
+}
+
+.chip-kind {
+    font-size: 9.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-right: 1px solid var(--line);
+    padding-right: 6px;
+    flex-shrink: 0;
+}
+
+.toolbar-count {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.toolbar-count strong {
+    color: var(--ink);
+    font-weight: 600;
+}
+
+.ctl {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 8px;
+    color: var(--muted);
+    flex-shrink: 0;
+}
+
+.ctl:hover {
+    background: var(--surface-2);
+}
+
+#coverSizeSlider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 88px;
+    height: 14px;
+    background: transparent;
+    cursor: pointer;
+}
+
+#coverSizeSlider::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--line);
+}
+
+#coverSizeSlider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    margin-top: -4.5px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--surface);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+}
+
+#coverSizeLabel {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 24px;
+    text-align: right;
+}
+
+.select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 0 26px 0 26px;
+    flex-shrink: 0;
+}
+
+.select-wrap:hover {
+    border-color: var(--accent);
+}
+
+.select-wrap .sel-ico {
+    position: absolute;
+    left: 8px;
+    color: var(--muted);
+    pointer-events: none;
+}
+
+.select-wrap .sel-caret {
+    position: absolute;
+    right: 8px;
+    color: var(--muted);
+    pointer-events: none;
+}
+
+#sortSelect {
+    appearance: none;
+    -webkit-appearance: none;
+    border: none;
+    background: transparent;
+    height: 100%;
+    font-size: 12px;
+    color: var(--ink-2);
+    cursor: pointer;
+    padding-right: 2px;
+    max-width: 132px;
+}
+
+.segmented {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px;
+    gap: 2px;
+    border-radius: 9px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    flex-shrink: 0;
+}
+
+.seg {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 24px;
+    border-radius: 7px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+
+.seg:hover {
+    color: var(--ink);
+}
+
+.seg input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.seg:has(input:checked) {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+}
+
+.colvis {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+    padding-top: 2px;
+}
+
+.colchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 9px 0 7px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    font-size: 11.5px;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.colchip input {
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    position: relative;
+    cursor: pointer;
+}
+
+.colchip input:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.colchip input:checked::after {
+    content: "";
+    position: absolute;
+    left: 3.5px;
+    top: 0.5px;
+    width: 4.5px;
+    height: 7px;
+    border: 1.5px solid #fff;
+    border-top: 0;
+    border-left: 0;
+    transform: rotate(42deg);
+}
+
+.colchip:has(input:checked) {
+    color: var(--ink-2);
+}
+
+/* ============================================================
+   Book grid
+   ============================================================ */
+.books-grid {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--cover-width, 140px), 1fr));
+    gap: var(--item-gap, 16px);
+    padding: var(--grid-padding, 18px);
+    align-content: start;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+.books-grid .grid-spacer {
+    grid-column: 1 / -1;
+    width: 100%;
+}
+
+.book-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    padding-bottom: 4px;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 200px;
+}
+
+.book-cover {
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--cover-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-1), 0 0 0 1px rgba(24, 26, 28, .06);
+    transition: transform .2s cubic-bezier(.2, .8, .2, 1), box-shadow .2s ease;
+    position: relative;
+}
+
+.book-cover::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(105deg, rgba(255, 255, 255, .22) 0%, rgba(255, 255, 255, 0) 42%);
+    pointer-events: none;
+}
+
+.book-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+}
+
+.book-cover.no-image {
+    color: var(--muted);
+    font-size: 11px;
+    text-align: center;
+    padding: 10px;
+    background: var(--surface-3);
+}
+
+.book-item:hover .book-cover {
+    transform: translateY(-4px) scale(1.012);
+    box-shadow: var(--shadow-3);
+}
+
+.book-title {
+    font-size: var(--title-font-size, 12px);
+    font-weight: 600;
+    line-height: 1.4;
+    text-align: center;
+    color: var(--ink);
+    width: calc(var(--cover-width, 120px) + 6px);
+    display: -webkit-box;
+    -webkit-line-clamp: var(--title-lines, 2);
+    line-clamp: var(--title-lines, 2);
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.book-author {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    max-width: calc(var(--cover-width, 120px) + 6px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: -4px;
+    line-height: 1.3;
+}
+
+.book-item.selected .book-cover {
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent), var(--shadow-2);
+}
+
+.book-item.selected .book-title {
+    color: var(--accent-ink);
+}
+
+/* ============================================================
+   Table view
+   ============================================================ */
+.books-table {
+    flex: 1;
+    overflow: auto;
+    background: var(--bg);
+    padding: 0 16px 16px;
+    display: flex;
+    flex-direction: column;
+    overscroll-behavior: contain;
+}
+
+.books-table table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: fixed;
+    background: var(--surface);
+    border-radius: var(--r);
+    box-shadow: var(--shadow-1);
+    overflow: hidden;
+}
+
+.books-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+    padding: 9px 12px;
+    text-align: left;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    user-select: none;
+    overflow: hidden;
+    backdrop-filter: blur(6px);
+}
+
+.books-table th .col-resize {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+}
+
+.books-table th .col-resize:hover {
+    background: var(--accent);
+    opacity: .5;
+}
+
+.books-table tbody tr {
+    cursor: pointer;
+    transition: background .12s;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 34px;
+}
+
+.books-table tbody tr:hover td {
+    background: var(--surface-2);
+}
+
+.books-table tbody tr.selected td {
+    background: var(--accent-soft);
+}
+
+.books-table tbody tr.selected td:first-child {
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.books-table td {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--ink-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.books-table td:first-child {
+    color: var(--ink);
+    font-weight: 500;
+}
+
+.books-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.books-table td .stars {
+    color: var(--gold);
+    letter-spacing: .5px;
+    font-size: 11px;
+}
+
+/* ============================================================
+   Right panel — book details
+   ============================================================ */
+#noSelection {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 64px 28px;
+    color: var(--muted);
+    font-size: 12.5px;
+    text-align: center;
+    line-height: 1.6;
+}
+
+#noSelection svg {
+    opacity: .35;
+}
+
+.details-content {
+    display: none;
+}
+
+.details-content.active {
+    display: block;
+    animation: fade-up .22s ease both;
+}
+
+@keyframes fade-up {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+.detail-hero {
+    position: relative;
+    padding: 24px 20px 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    text-align: center;
+}
+
+.detail-hero::before {
+    content: "";
+    position: absolute;
+    top: -30px;
+    left: 50%;
+    width: 260px;
+    height: 200px;
+    transform: translateX(-50%);
+    background: radial-gradient(closest-side, var(--accent-soft), transparent 72%);
+    opacity: .5;
+    pointer-events: none;
+}
+
+#detailsCover {
+    width: 172px;
+    max-width: 70%;
+    aspect-ratio: 2 / 3;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--cover-bg);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, .14), 0 26px 44px -22px rgba(0, 0, 0, .55);
+    position: relative;
+}
+
+#coverImage {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.detail-title {
+    font-family: var(--serif);
+    font-size: 20px;
+    line-height: 1.32;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -.005em;
+    max-width: 26ch;
+}
+
+.detail-byline {
+    font-size: 12.5px;
+    color: var(--ink-2);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+}
+
+.author-link {
+    color: var(--accent-ink);
+    padding: 1px 3px;
+    border-radius: 4px;
+    transition: background .12s;
+}
+
+.author-link:hover {
+    background: var(--accent-soft);
+}
+
+.format-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    justify-content: center;
+    padding: 0 20px 18px;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.format-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-2);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-decoration: none;
+    transition: border-color .15s, background .15s, color .15s;
+}
+
+.format-button:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+}
+
+.format-button svg {
+    color: var(--muted);
+}
+
+.format-button:hover svg {
+    color: var(--accent-ink);
+}
+
+.no-formats {
+    font-size: 11.5px;
+    color: var(--muted);
+}
+
+.meta {
+    padding: 16px 20px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.meta > .detail-section:first-child {
+    border-top: none;
+    padding-top: 0;
+}
+
+.detail-section {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding-top: 11px;
+    border-top: 1px solid var(--line-soft);
+}
+
+.detail-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.detail-value {
+    font-size: 12.5px;
+    color: var(--ink-2);
+    line-height: 1.6;
+    word-break: break-word;
+}
+
+.detail-value a {
+    color: var(--accent-ink);
+    text-decoration: none;
+}
+
+.detail-value a:hover {
+    text-decoration: underline;
+}
+
+#detailCommentsSection {
+    padding: 4px 20px 24px;
+}
+
+#detailComments {
+    font-size: 12.5px;
+    line-height: 1.8;
+    color: var(--ink-2);
+    background: var(--surface-2);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--r);
+    padding: 12px 13px;
+    max-height: 220px;
+    overflow-y: auto;
+    word-break: break-word;
+}
+
+#detailComments p {
+    margin: 0 0 .85em;
+}
+
+#detailComments p:last-child {
+    margin-bottom: 0;
+}
+
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    margin: 0 4px 4px 0;
+    border-radius: 999px;
+    background: var(--surface-3);
+    color: var(--ink-2);
+    font-size: 11px;
+    border: none;
+    transition: background .12s, color .12s;
+}
+
+.tag-chip:hover {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+}
+
+.stars {
+    color: var(--gold);
+    font-size: 12px;
+    letter-spacing: 1px;
+}
+
+/* ============================================================
+   Status bar
+   ============================================================ */
+.bottom-panel {
+    height: var(--status-h);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    font-size: 11.5px;
+    color: var(--muted);
+}
+
+.status-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.status-item strong {
+    color: var(--ink-2);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.status-sep {
+    width: 1px;
+    height: 12px;
+    background: var(--line);
+}
+
+.status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: .8;
+}
+
+#statusMessage {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ============================================================
+   Feedback: loading / empty / toast
+   ============================================================ */
+.loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12.5px;
+    padding: 10px;
+}
+
+.spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--line);
+    border-top-color: var(--accent);
+    animation: spin .7s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.empty-state {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 72px 20px;
+    color: var(--muted);
+    font-size: 12.5px;
+    text-align: center;
+    line-height: 1.7;
+}
+
+.empty-state svg {
+    opacity: .3;
+}
+
+.empty-state strong {
+    color: var(--ink-2);
+    font-weight: 600;
+    font-size: 13.5px;
+}
+
+#toast {
+    position: fixed;
+    left: 50%;
+    bottom: 56px;
+    transform: translate(-50%, 12px);
+    background: var(--ink);
+    color: var(--bg);
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    box-shadow: var(--shadow-3);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s, transform .2s;
+    z-index: 100;
+    max-width: 70vw;
+}
+
+#toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+/* ============================================================
+   Login screen
+   ============================================================ */
+#loginContainer {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background:
+        radial-gradient(900px 500px at 12% 0%, var(--accent-soft), transparent 60%),
+        radial-gradient(700px 500px at 92% 100%, var(--surface-3), transparent 60%),
+        var(--bg);
+}
+
+.login-card {
+    width: 100%;
+    max-width: 372px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-3);
+    padding: 32px 30px 26px;
+}
+
+.login-head {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 26px;
+    text-align: center;
+}
+
+.login-head .brand-mark {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+}
+
+.login-title {
+    font-family: var(--serif);
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: .01em;
+}
+
+.login-sub {
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: .04em;
+}
+
+.login-field {
+    margin-bottom: 14px;
+}
+
+.login-field label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.login-field input {
+    width: 100%;
+    height: 38px;
+    padding: 0 12px;
+    border-radius: var(--r);
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    font-size: 13px;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+}
+
+.login-field input:focus {
+    outline: none;
+    background: var(--surface);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.login-submit {
+    width: 100%;
+    height: 40px;
+    margin-top: 8px;
+    border-radius: var(--r);
+    background: linear-gradient(160deg, var(--accent), var(--accent-ink));
+    color: #fff;
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    box-shadow: 0 4px 12px -4px rgba(14, 122, 103, .45);
+    transition: filter .15s, transform .12s;
+}
+
+.login-submit:hover {
+    filter: brightness(1.06);
+}
+
+.login-submit:active {
+    transform: translateY(1px);
+}
+
+#loginError {
+    margin-top: 14px;
+    padding: 9px 12px;
+    border-radius: var(--r-sm);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
+    font-size: 12px;
+    display: none;
+    text-align: center;
+}
+
+.login-foot {
+    margin-top: 18px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+}
+
+/* ============================================================
+   Scrollbars
+   ============================================================ */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
+    background-clip: content-box;
+}
+
+/* ============================================================
+   Favorites + theme icon
+   ============================================================ */
+.fav-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    width: 27px;
+    height: 27px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .88);
+    color: var(--muted);
+    box-shadow: var(--shadow-1);
+    opacity: 0;
+    transform: scale(.9);
+    transition: opacity .15s, transform .15s, color .15s, background .15s;
+}
+
+.book-item:hover .fav-btn,
+.fav-btn.active,
+.fav-btn:focus-visible {
+    opacity: 1;
+    transform: none;
+}
+
+.fav-btn:hover {
+    color: var(--danger);
+}
+
+.fav-btn.active {
+    color: var(--danger);
+}
+
+[data-theme="dark"] .fav-btn {
+    background: rgba(18, 20, 24, .84);
+}
+
+.row-fav {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    color: var(--muted);
+    margin-right: 7px;
+    vertical-align: middle;
+}
+
+.row-fav:hover,
+.row-fav.active {
+    color: var(--danger);
+}
+
+.fav-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 5px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.fav-item:hover {
+    background: var(--surface-2);
+}
+
+.fav-thumb {
+    width: 26px;
+    height: 38px;
+    border-radius: 4px;
+    object-fit: cover;
+    background: var(--cover-bg);
+    flex-shrink: 0;
+}
+
+.fav-txt {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.fav-title {
+    font-size: 12px;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fav-auth {
+    font-size: 10.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fav-remove {
+    width: 20px;
+    height: 20px;
+    font-size: 10px;
+    color: var(--muted);
+    opacity: 0;
+    flex-shrink: 0;
+}
+
+.fav-item:hover .fav-remove {
+    opacity: .8;
+}
+
+.detail-fav {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 13px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-2);
+    font-size: 11.5px;
+    font-weight: 600;
+    transition: border-color .15s, color .15s, background .15s;
+}
+
+.detail-fav:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.detail-fav.active {
+    background: rgba(224, 121, 111, .13);
+    border-color: transparent;
+    color: var(--danger);
+}
+
+.t-ico-moon {
+    display: none;
+}
+
+[data-theme="dark"] .t-ico-sun {
+    display: none;
+}
+
+[data-theme="dark"] .t-ico-moon {
+    display: block;
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+#drawerScrim {
+    position: fixed;
+    inset: 0;
+    z-index: 15;
+    background: rgba(12, 14, 16, .34);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease;
+}
+
+body:has(.left-panel.open) #drawerScrim {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.panel-close {
+    display: inline-flex;
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 6;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-2);
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.panel-close:hover {
+    color: var(--ink);
+    border-color: var(--line-strong);
+}
+
+@media (max-width: 1180px) {
+    .right-panel {
+        width: 330px;
+    }
+}
+
+@media (max-width: 980px) {
+    .brand-sub {
+        display: none;
+    }
+
+    .search-kbd {
+        display: none;
+    }
+
+    #searchInput {
+        padding-right: 34px;
+    }
+
+    .left-panel {
+        width: 280px;
+    }
+
+    .right-panel {
+        width: min(360px, 88vw);
+    }
+
+    body:has(.right-panel.open) #drawerScrim {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
+@media (max-width: 720px) {
+
+    .hide-mobile {
+        display: none !important;
+    }
+
+    .brand-txt {
+        display: none;
+    }
+
+    .search-box {
+        max-width: none;
+    }
+
+    #userInfo .u-name {
+        display: none;
+    }
+
+    .books-toolbar {
+        padding: 8px 12px;
+        gap: 8px;
+    }
+
+    .toolbar-count {
+        display: none;
+    }
+
+    .books-grid {
+        --grid-padding: 12px;
+    }
+
+    .bottom-panel {
+        padding: 0 12px;
+    }
+
+    .status-item.hide-sm {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: .001ms !important;
+        transition-duration: .001ms !important;
+    }
+}
+</style>
 </head>
 
 <body>
-    <!-- Top Panel -->
-    <div class="top-panel">
-        <h1>Biblio - E-book Library Browser</h1>
-        <button onclick="app.refreshLibraries()">🔄 Refresh</button>
-        <button onclick="window.location.href='/profile.html'">👤 My Profile</button>
-        <button id="adminBtn" style="display: none;" onclick="window.location.href='/admin.html'">🔐 Admin</button>
-        <button onclick="app.showAbout()">ℹ️ About</button>
+<!-- ================= Header ================= -->
+<header class="app-bar">
+    <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 5.4C4 4.6 4.6 4 5.4 4H10.8V20H5.4C4.6 20 4 19.4 4 18.6V5.4Z" />
+                <path d="M13.2 4H18.6C19.4 4 20 4.6 20 5.4V18.6C20 19.4 19.4 20 18.6 20H13.2V4Z" />
+                <path d="M6.4 8.2h2M6.4 11.4h2" />
+            </svg>
+        </div>
+        <div class="brand-txt">
+            <span class="brand-name">Biblio</span>
+            <span class="brand-sub" id="brandLibrary">Library</span>
+        </div>
     </div>
 
-    <!-- Main Content Area -->
-    <div class="content-area">
-        <!-- Left Panel - Filters -->
-        <div class="left-panel">
-            <div id="librarySelector">
-                <div class="filter-section">
-                    <div class="filter-section-header" onclick="app.toggleFilterSection('librariesList')">
-                        <span>📚 Libraries</span>
-                        <span class="filter-section-toggle collapsed">▼</span>
-                    </div>
-                    <div id="librariesList" class="filter-section-content collapsed" style="overflow-y: auto;"></div>
-                </div>
-            </div>
+    <button class="icon-btn nav-toggle" id="filtersToggle" title="Browse filters" aria-label="Toggle filters"
+        onclick="var p=document.querySelector('.left-panel'); p.classList.toggle('open'); document.querySelector('.right-panel').classList.remove('open');">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+            stroke-linecap="round">
+            <path d="M4 6h16M7 12h10M10 18h4" />
+        </svg>
+    </button>
 
-            <div class="filter-section">
-                <div class="filter-section-header" onclick="app.toggleFilterSection('authorsList')">
-                    <span>👤 Authors <span id="authorCount" style="font-size: 0.8em; color: #7f8c8d;"></span></span>
-                    <button onclick="event.stopPropagation(); app.clearAuthors()"
-                        style="padding: 4px 8px; font-size: 10px; cursor: pointer; background: #3498db; color: white; border: none; border-radius: 3px; margin-left: auto;">Clear</button>
-                    <span class="filter-section-toggle collapsed">▼</span>
-                </div>
-                <div id="authorsList" class="filter-section-content collapsed" style="overflow-y: auto;">
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        Loading...
-                    </div>
-                </div>
-            </div>
+    <div class="search-box">
+        <svg class="search-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round">
+            <circle cx="10.5" cy="10.5" r="6.5" />
+            <path d="m15.4 15.4 4.2 4.2" />
+        </svg>
+        <input type="text" id="searchInput" placeholder="Search titles, authors, series…" autocomplete="off"
+            spellcheck="false">
+        <button id="clearSearchBtn" title="Clear search" onclick="app.clearSearch()">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+        </button>
+        <kbd class="search-kbd">/</kbd>
+    </div>
 
-            <div class="filter-section">
-                <div class="filter-section-header" onclick="app.toggleFilterSection('seriesList')">
-                    <span>📖 Series <span id="seriesCount" style="font-size: 0.8em; color: #7f8c8d;"></span></span>
-                    <button onclick="event.stopPropagation(); app.clearSeries()"
-                        style="padding: 4px 8px; font-size: 10px; cursor: pointer; background: #3498db; color: white; border: none; border-radius: 3px; margin-left: auto;">Clear</button>
-                    <span class="filter-section-toggle collapsed">▼</span>
-                </div>
-                <div id="seriesList" class="filter-section-content collapsed" style="overflow-y: auto;">
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        Loading...
-                    </div>
-                </div>
-            </div>
+    <div class="app-actions">
+        <button class="icon-btn hide-mobile" title="Refresh libraries" aria-label="Refresh libraries"
+            onclick="app.refreshLibraries()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 11a8 8 0 0 0-13.7-5.2M4 13a8 8 0 0 0 13.7 5.2" />
+                <path d="M20 4v6h-6M4 20v-6h6" />
+            </svg>
+        </button>
+        <button class="icon-btn" id="themeToggle" title="Switch to dark theme" aria-label="Toggle theme"
+            onclick="toggleTheme()">
+            <svg class="t-ico-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round">
+                <circle cx="12" cy="12" r="4.2" />
+                <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4" />
+            </svg>
+            <svg class="t-ico-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+            </svg>
+        </button>
+        <button class="icon-btn hide-mobile" id="adminBtn" style="display:none" title="Admin" aria-label="Admin"
+            onclick="window.location.href='/admin.html'">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3Z" />
+                <path d="M9.5 12l1.8 1.8L15 10" />
+            </svg>
+        </button>
+        <button class="icon-btn hide-mobile" title="Profile" aria-label="Profile"
+            onclick="window.location.href='/profile.html'">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                stroke-linecap="round">
+                <circle cx="12" cy="8.2" r="3.6" />
+                <path d="M4.8 20c.9-3.6 3.8-5.6 7.2-5.6s6.3 2 7.2 5.6" />
+            </svg>
+        </button>
+        <button class="icon-btn hide-mobile" title="About Biblio" aria-label="About" onclick="app.showAbout()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                stroke-linecap="round">
+                <circle cx="12" cy="12" r="8.4" />
+                <path d="M12 11v5.2M12 7.8v.4" />
+            </svg>
+        </button>
+    </div>
+</header>
 
-            <div class="filter-section">
-                <div class="filter-section-header" onclick="app.toggleFilterSection('tagsList')">
-                    <span>🏷️ Tags <span id="tagCount" style="font-size: 0.8em; color: #7f8c8d;"></span></span>
-                    <button onclick="event.stopPropagation(); app.clearTags()"
-                        style="padding: 4px 8px; font-size: 10px; cursor: pointer; background: #3498db; color: white; border: none; border-radius: 3px; margin-left: auto;">Clear</button>
-                    <span class="filter-section-toggle collapsed">▼</span>
-                </div>
-                <div id="tagsList" class="filter-section-content collapsed" style="overflow-y: auto;">
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        Loading...
-                    </div>
-                </div>
-            </div>
-
-            <div class="filter-section">
-                <div class="filter-section-header" onclick="app.toggleFilterSection('formatsList')">
-                    <span>📄 Formats <span id="formatCount" style="font-size: 0.8em; color: #7f8c8d;"></span></span>
-                    <button onclick="event.stopPropagation(); app.clearFormats()"
-                        style="padding: 4px 8px; font-size: 10px; cursor: pointer; background: #3498db; color: white; border: none; border-radius: 3px; margin-left: auto;">Clear</button>
-                    <span class="filter-section-toggle collapsed">▼</span>
-                </div>
-                <div id="formatsList" class="filter-section-content collapsed" style="overflow-y: auto;">
-                    <div style="padding: 10px; color: #95a5a6; font-size: 12px;">Select a library to load formats</div>
-                </div>
-            </div>
+<!-- ================= Main layout ================= -->
+<div class="content-area">
+    <!-- Sidebar -->
+    <aside class="left-panel">
+        <div class="panel-title">
+            <span>Browse</span>
         </div>
 
-        <!-- Splitter between left and center panels -->
-        <div class="splitter" id="splitterLeft"></div>
+        <section class="fsec">
+            <div class="filter-section-header">
+                <span class="fsec-title">Favorites</span>
+                <span class="fsec-total" id="favTotal">0</span>
+            </div>
+            <div class="fsec-body" id="favoritesBody">
+                <div class="fsec-empty">No favorites yet — tap the heart on a book.</div>
+            </div>
+        </section>
 
-        <!-- Center Panel - Books Grid -->
-        <div class="center-panel">
-            <div class="books-toolbar">
-                <div style="flex: 1; display: flex; align-items: center; position: relative;">
-                    <input type="text" id="searchInput" placeholder="Search books or authors..."
-                        style="flex: 1; padding: 6px 10px; border: 1px solid #bdc3c7; border-radius: 4px; padding-right: 35px;">
-                    <button id="clearSearchBtn"
-                        style="position: absolute; right: 8px; background: none; border: none; cursor: pointer; padding: 4px 6px; color: #95a5a6; font-size: 16px; display: none; line-height: 1; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;"
-                        title="Clear search" onclick="app.clearSearch()">✕</button>
+        <section class="fsec">
+            <div class="filter-section-header" onclick="app.toggleFilterSection('librariesList')">
+                <span class="fsec-title">Libraries</span>
+                <span class="fsec-total" id="libraryTotal"></span>
+                <span class="filter-section-toggle collapsed">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.4" stroke-linecap="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </span>
+            </div>
+            <div id="librariesList" class="filter-section-content collapsed"></div>
+        </section>
+
+        <section class="fsec">
+            <div class="filter-section-header" onclick="app.toggleFilterSection('authorsList')">
+                <span class="fsec-title">Authors</span>
+                <span class="fsec-total" id="authorTotal"></span>
+                <span class="fsec-badge" id="authorCount"></span>
+                <button class="sec-clear" onclick="event.stopPropagation(); app.clearAuthors()">clear</button>
+                <span class="filter-section-toggle collapsed">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.4" stroke-linecap="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </span>
+            </div>
+            <div id="authorsList" class="filter-section-content collapsed">
+                <div class="fsec-search">
+                    <svg class="fs-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round">
+                        <circle cx="10.5" cy="10.5" r="6.5" />
+                        <path d="m15.4 15.4 4.2 4.2" />
+                    </svg>
+                    <input type="text" id="authorsSearch" placeholder="Filter authors" autocomplete="off">
                 </div>
+                <div class="fsec-body" id="authorsBody">
+                    <div class="loading"><span class="spinner"></span>Loading…</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="fsec">
+            <div class="filter-section-header" onclick="app.toggleFilterSection('seriesList')">
+                <span class="fsec-title">Series</span>
+                <span class="fsec-total" id="seriesTotal"></span>
+                <span class="fsec-badge" id="seriesCount"></span>
+                <button class="sec-clear" onclick="event.stopPropagation(); app.clearSeries()">clear</button>
+                <span class="filter-section-toggle collapsed">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.4" stroke-linecap="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </span>
+            </div>
+            <div id="seriesList" class="filter-section-content collapsed">
+                <div class="fsec-search">
+                    <svg class="fs-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round">
+                        <circle cx="10.5" cy="10.5" r="6.5" />
+                        <path d="m15.4 15.4 4.2 4.2" />
+                    </svg>
+                    <input type="text" id="seriesSearch" placeholder="Filter series" autocomplete="off">
+                </div>
+                <div class="fsec-body" id="seriesBody">
+                    <div class="loading"><span class="spinner"></span>Loading…</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="fsec">
+            <div class="filter-section-header" onclick="app.toggleFilterSection('tagsList')">
+                <span class="fsec-title">Tags</span>
+                <span class="fsec-total" id="tagTotal"></span>
+                <span class="fsec-badge" id="tagCount"></span>
+                <button class="sec-clear" onclick="event.stopPropagation(); app.clearTags()">clear</button>
+                <span class="filter-section-toggle collapsed">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.4" stroke-linecap="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </span>
+            </div>
+            <div id="tagsList" class="filter-section-content collapsed">
+                <div class="fsec-search">
+                    <svg class="fs-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round">
+                        <circle cx="10.5" cy="10.5" r="6.5" />
+                        <path d="m15.4 15.4 4.2 4.2" />
+                    </svg>
+                    <input type="text" id="tagsSearch" placeholder="Filter tags" autocomplete="off">
+                </div>
+                <div class="fsec-body" id="tagsBody">
+                    <div class="loading"><span class="spinner"></span>Loading…</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="fsec">
+            <div class="filter-section-header" onclick="app.toggleFilterSection('formatsList')">
+                <span class="fsec-title">Formats</span>
+                <span class="fsec-total" id="formatTotal"></span>
+                <span class="fsec-badge" id="formatCount"></span>
+                <button class="sec-clear" onclick="event.stopPropagation(); app.clearFormats()">clear</button>
+                <span class="filter-section-toggle collapsed">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.4" stroke-linecap="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </span>
+            </div>
+            <div id="formatsList" class="filter-section-content collapsed">
+                <div class="fsec-body" id="formatsBody">
+                    <div class="fsec-empty">Select a library to load formats</div>
+                </div>
+            </div>
+        </section>
+    </aside>
+
+    <div class="splitter" id="splitterLeft"></div>
+
+    <!-- Center -->
+    <main class="center-panel">
+        <div class="books-toolbar">
+            <div class="toolbar-count" id="toolbarCount"></div>
+            <div class="chips" id="activeChips"></div>
+
+            <div class="ctl" id="coverSizeItem">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                    stroke-linecap="round">
+                    <rect x="4" y="4" width="7" height="9" rx="1.4" />
+                    <rect x="13" y="4" width="7" height="5" rx="1.4" />
+                    <rect x="13" y="11" width="7" height="9" rx="1.4" />
+                    <rect x="4" y="15" width="7" height="5" rx="1.4" />
+                </svg>
+                <input type="range" id="coverSizeSlider" min="50" max="250" value="140" step="10"
+                    oninput="app.setCoverSize(this.value)">
+                <span id="coverSizeLabel">140</span>
+            </div>
+
+            <button class="icon-btn" id="shuffleBtn" title="Surprise me — open a random shelf"
+                aria-label="Random books" onclick="app.shuffleBooks()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 7h3.2c1.5 0 2.6.6 3.6 1.7l7.4 7.6c1 1 2 1.5 3.5 1.5H21" />
+                    <path d="M18 13.8l3 2.2-3 2.2" />
+                    <path d="M3 17.2h3.2c1.5 0 2.6-.6 3.6-1.7l1.3-1.3" />
+                    <path d="M15 7.2h2.6c1.4 0 2.4.5 3.4 1.5" />
+                    <path d="M18 4l3 3-3 3" />
+                </svg>
+            </button>
+
+            <label class="select-wrap">
+                <svg class="sel-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="1.8" stroke-linecap="round">
+                    <path d="M4 7h9M4 12h6M4 17h4" />
+                    <path d="M17 6v12M17 18l-3-3M17 18l3-3" />
+                </svg>
                 <select id="sortSelect" onchange="app.updateSort()">
-                    <option value="recent">Recent</option>
-                    <option value="title">Title A-Z</option>
-                    <option value="author">Author A-Z</option>
+                    <option value="recent">Recently added</option>
+                    <option value="title">Title A–Z</option>
+                    <option value="author">Author A–Z</option>
                     <option value="series">Series</option>
                 </select>
+                <svg class="sel-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2.2" stroke-linecap="round">
+                    <path d="M6 9l6 6 6-6" />
+                </svg>
+            </label>
+
+            <div class="segmented" role="group" aria-label="View mode">
+                <label class="seg" title="Grid view" aria-label="Grid view">
+                    <input type="radio" name="viewMode" value="grid" checked onchange="app.setViewMode('grid')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round">
+                        <rect x="4" y="4" width="6.5" height="6.5" rx="1.2" />
+                        <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.2" />
+                        <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.2" />
+                        <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.2" />
+                    </svg>
+                </label>
+                <label class="seg" title="Table view" aria-label="Table view">
+                    <input type="radio" name="viewMode" value="table" onchange="app.setViewMode('table')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round">
+                        <rect x="4" y="5" width="16" height="14" rx="1.6" />
+                        <path d="M4 10h16M4 14.6h16M10.6 10v9" />
+                    </svg>
+                </label>
             </div>
-            <div class="books-grid" id="booksGrid">
-                <div class="no-selection">Select a library to view books</div>
-            </div>
-            <div class="books-table" id="booksTable" style="display: none;">
-                <table id="booksTableElement">
-                    <thead>
-                        <tr>
-                            <th style="width: 30%;" data-col="title" class="resizable-col">Title <span
-                                    class="col-resize"></span></th>
-                            <th style="width: 20%;" data-col="authors" class="resizable-col">Authors <span
-                                    class="col-resize"></span></th>
-                            <th style="width: 15%;" data-col="series" class="resizable-col">Series <span
-                                    class="col-resize"></span></th>
-                            <th style="width: 15%;" data-col="publisher" class="resizable-col">Publisher <span
-                                    class="col-resize"></span></th>
-                            <th style="width: 10%;" data-col="rating" class="resizable-col">Rating <span
-                                    class="col-resize"></span></th>
-                            <th style="width: 10%;" data-col="pubdate" class="resizable-col">Published <span
-                                    class="col-resize"></span></th>
-                        </tr>
-                    </thead>
-                    <tbody id="booksTableBody">
-                    </tbody>
-                </table>
+
+            <div class="colvis" id="columnVisibilityItem">
+                <label class="colchip"><input type="checkbox" data-col="title" checked
+                        onchange="app.toggleColumnVisibility('title')">Title</label>
+                <label class="colchip"><input type="checkbox" data-col="authors" checked
+                        onchange="app.toggleColumnVisibility('authors')">Authors</label>
+                <label class="colchip"><input type="checkbox" data-col="series" checked
+                        onchange="app.toggleColumnVisibility('series')">Series</label>
+                <label class="colchip"><input type="checkbox" data-col="publisher" checked
+                        onchange="app.toggleColumnVisibility('publisher')">Publisher</label>
+                <label class="colchip"><input type="checkbox" data-col="rating" checked
+                        onchange="app.toggleColumnVisibility('rating')">Rating</label>
+                <label class="colchip"><input type="checkbox" data-col="pubdate" checked
+                        onchange="app.toggleColumnVisibility('pubdate')">Published</label>
             </div>
         </div>
 
-        <!-- Splitter between center and right panels -->
-        <div class="splitter" id="splitterRight"></div>
-
-        <!-- Right Panel - Book Details -->
-        <div class="right-panel">
-            <div id="noSelection" class="no-selection">
-                Select a book to view details
+        <div class="books-grid" id="booksGrid">
+            <div class="empty-state">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"
+                    stroke-linecap="round">
+                    <path d="M4 5.4C4 4.6 4.6 4 5.4 4H10.8V20H5.4C4.6 20 4 19.4 4 18.6V5.4Z" />
+                    <path d="M13.2 4H18.6C19.4 4 20 4.6 20 5.4V18.6C20 19.4 19.4 20 18.6 20H13.2V4Z" />
+                </svg>
+                <strong>No library selected</strong>
+                <span>Pick a library on the left to start browsing.</span>
             </div>
-            <div id="bookDetails" class="details-content">
-                <div id="detailsCover"
-                    style="text-align: center; margin-bottom: 15px; display: flex; align-items: center; justify-content: center; aspect-ratio: 2/3; width: 100%; flex-shrink: 0;">
-                    <img id="coverImage" src="" alt="Book cover"
-                        style="width: 100%; height: 100%; object-fit: contain; border: 1px solid #bdc3c7; border-radius: 4px;">
-                </div>
+        </div>
 
-                <div id="detailFormats"
-                    style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 20px;">
-                    <div class="loading" style="width: 100%;">
-                        <div class="spinner" style="width: 12px; height: 12px; margin-right: 5px;"></div>
-                        Loading formats...
-                    </div>
-                </div>
+        <div class="books-table" id="booksTable" style="display: none;">
+            <table id="booksTableElement">
+                <thead>
+                    <tr>
+                        <th style="width: 32%;" data-col="title" class="resizable-col">Title <span
+                                class="col-resize"></span></th>
+                        <th style="width: 20%;" data-col="authors" class="resizable-col">Authors <span
+                                class="col-resize"></span></th>
+                        <th style="width: 14%;" data-col="series" class="resizable-col">Series <span
+                                class="col-resize"></span></th>
+                        <th style="width: 14%;" data-col="publisher" class="resizable-col">Publisher <span
+                                class="col-resize"></span></th>
+                        <th style="width: 10%;" data-col="rating" class="resizable-col">Rating <span
+                                class="col-resize"></span></th>
+                        <th style="width: 10%;" data-col="pubdate" class="resizable-col">Published <span
+                                class="col-resize"></span></th>
+                    </tr>
+                </thead>
+                <tbody id="booksTableBody"></tbody>
+            </table>
+        </div>
+    </main>
 
-                <div class="detail-section">
-                    <span class="detail-label">Title:</span>
-                    <span class="detail-value" id="detailTitle"></span>
-                </div>
+    <div class="splitter" id="splitterRight"></div>
 
-                <div class="detail-section">
-                    <span class="detail-label">Authors:</span>
-                    <span class="detail-value" id="detailAuthors"></span>
-                </div>
+    <!-- Details -->
+    <aside class="right-panel">
+        <button class="panel-close" title="Close details" aria-label="Close details"
+            onclick="document.querySelector('.right-panel').classList.remove('open')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+        </button>
+        <div id="noSelection">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"
+                stroke-linecap="round">
+                <rect x="4" y="3.6" width="16" height="16.8" rx="2.2" />
+                <path d="M8 8.4h8M8 12h8M8 15.6h5" />
+            </svg>
+            <span>Select a book to see its details</span>
+        </div>
 
-                <div class="detail-section" id="detailCommentsSection">
-                    <div class="detail-value" id="detailComments"></div>
+        <div id="bookDetails" class="details-content">
+            <div class="detail-hero">
+                <div id="detailsCover">
+                    <img id="coverImage" src="" alt="Book cover">
                 </div>
+                <h2 class="detail-title" id="detailTitle"></h2>
+                <div class="detail-byline" id="detailAuthors"></div>
+                <button type="button" class="detail-fav" id="detailFav" onclick="app.toggleFavoriteFromDetails()">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 20.4c-1-.7-8.5-5.4-10.2-9.6C.7 7.4 2.9 4 6.3 4c2 0 3.7 1 5.7 3 2-2 3.7-3 5.7-3 3.4 0 5.6 3.4 4.5 6.8-1.7 4.2-9.2 8.9-10.2 9.6Z" />
+                    </svg>
+                    <span id="detailFavText">Add to favorites</span>
+                </button>
+            </div>
 
+            <div style="text-align:center;margin-bottom:14px;">
+                <div class="format-row" id="detailFormats" style="border-bottom:none;padding-bottom:0;">
+                    <div class="loading" style="width:100%"><span class="spinner"></span>Loading…</div>
+                </div>
+            </div>
+
+            <div class="meta">
                 <div class="detail-section" id="detailSeriesSection">
-                    <span class="detail-label">Series:</span>
+                    <span class="detail-label">Series</span>
                     <span class="detail-value" id="detailSeries"></span>
                 </div>
 
                 <div class="detail-section" id="detailTagsSection">
-                    <span class="detail-label">Tags:</span>
-                    <span class="detail-value" id="detailTags"></span>
+                    <span class="detail-label">Tags</span>
+                    <div class="detail-value" id="detailTags"></div>
                 </div>
 
                 <div class="detail-section" id="detailPublisherSection">
-                    <span class="detail-label">Publisher:</span>
+                    <span class="detail-label">Publisher</span>
                     <span class="detail-value" id="detailPublisher"></span>
                 </div>
 
                 <div class="detail-section" id="detailPubdateSection">
-                    <span class="detail-label">Published:</span>
+                    <span class="detail-label">Published</span>
                     <span class="detail-value" id="detailPubdate"></span>
                 </div>
 
                 <div class="detail-section" id="detailRatingSection">
-                    <span class="detail-label">Rating:</span>
+                    <span class="detail-label">Rating</span>
                     <span class="detail-value" id="detailRating"></span>
                 </div>
             </div>
-        </div>
-    </div>
 
-    <!-- Bottom Panel -->
-    <div class="bottom-panel">
-        <div class="status-left">
-            <div class="status-item">
-                <span>Library:</span>
-                <strong id="statusLibrary">None</strong>
-            </div>
-            <div class="status-item">
-                <span>Books:</span>
-                <strong id="statusBooks">0</strong>
-            </div>
-            <div class="status-item">
-                <span>Filtered:</span>
-                <strong id="statusFiltered">0</strong>
-            </div>
-            <div class="status-item" style="margin-left: 20px;">
-                <span>View:</span>
-                <label style="margin-left: 8px; margin-right: 12px;">
-                    <input type="radio" name="viewMode" value="grid" checked onchange="app.setViewMode('grid')"> Grid
-                </label>
-                <label>
-                    <input type="radio" name="viewMode" value="table" onchange="app.setViewMode('table')"> Table
-                </label>
-            </div>
-            <div class="status-item" style="margin-left: 20px;" id="coverSizeItem">
-                <span>Cover Size:</span>
-                <input type="range" id="coverSizeSlider" min="50" max="250" value="120" step="10"
-                    style="width: 150px; margin-left: 8px; margin-right: 8px; cursor: pointer;"
-                    oninput="app.setCoverSize(this.value)">
-                <span id="coverSizeLabel" style="margin-left: 8px; min-width: 40px;">120</span>
-            </div>
-            <div class="status-item" style="margin-left: 20px; display: none;" id="columnVisibilityItem">
-                <span>Columns:</span>
-                <label style="margin-left: 8px; margin-right: 6px;"><input type="checkbox" data-col="title" checked
-                        onchange="app.toggleColumnVisibility('title')"> Title</label>
-                <label style="margin-right: 6px;"><input type="checkbox" data-col="authors" checked
-                        onchange="app.toggleColumnVisibility('authors')"> Authors</label>
-                <label style="margin-right: 6px;"><input type="checkbox" data-col="series" checked
-                        onchange="app.toggleColumnVisibility('series')"> Series</label>
-                <label style="margin-right: 6px;"><input type="checkbox" data-col="publisher" checked
-                        onchange="app.toggleColumnVisibility('publisher')"> Publisher</label>
-                <label style="margin-right: 6px;"><input type="checkbox" data-col="rating" checked
-                        onchange="app.toggleColumnVisibility('rating')"> Rating</label>
-                <label><input type="checkbox" data-col="pubdate" checked
-                        onchange="app.toggleColumnVisibility('pubdate')"> Published</label>
+            <div class="detail-section" id="detailCommentsSection">
+                <span class="detail-label" style="padding:0 20px 6px;">Description</span>
+                <div id="detailComments"></div>
             </div>
         </div>
-        <div id="statusMessage" style="text-align: right;">Ready</div>
-    </div>
+    </aside>
+</div>
 
-    <script src="app.js?v=39"></script>
+<!-- ================= Status bar ================= -->
+<footer class="bottom-panel">
+    <div class="status-left">
+        <div class="status-item">
+            <span class="status-dot"></span>
+            <strong id="statusLibrary">None</strong>
+        </div>
+        <div class="status-sep"></div>
+        <div class="status-item">
+            <span>Books</span>
+            <strong id="statusBooks">0</strong>
+        </div>
+        <div class="status-item hide-sm" id="matchesItem" style="display:none">
+            <span>Matches</span>
+            <strong id="statusFiltered">0</strong>
+        </div>
+    </div>
+    <div id="statusMessage">Ready</div>
+</footer>
+
+<div id="toast"></div>
+<div id="drawerScrim"
+    onclick="document.querySelector('.left-panel').classList.remove('open'); document.querySelector('.right-panel').classList.remove('open')"></div>
+
+<script>
+/* Theme boot: applied before first paint to avoid a flash. */
+(function () {
+    var t = localStorage.getItem('biblioTheme') || 'light';
+    document.documentElement.setAttribute('data-theme', t);
+})();
+
+function toggleTheme() {
+    var root = document.documentElement;
+    var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    localStorage.setItem('biblioTheme', next);
+    var btn = document.getElementById('themeToggle');
+    if (btn) {
+        var label = next === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+        btn.title = label;
+        btn.setAttribute('aria-label', label);
+    }
+}
+
+/* Keyboard: "/" focuses search, Esc clears it. */
+document.addEventListener('keydown', function (e) {
+    var el = document.activeElement;
+    var typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+    if (e.key === '/' && !typing) {
+        e.preventDefault();
+        var s = document.getElementById('searchInput');
+        if (s) s.focus();
+    }
+    if (e.key === 'Escape' && el && el.id === 'searchInput') {
+        if (window.app) app.clearSearch();
+        el.blur();
+    }
+    if (e.key === 'Escape') {
+        document.querySelector('.right-panel').classList.remove('open');
+        document.querySelector('.left-panel').classList.remove('open');
+    }
+});
+</script>
+<script src="app.js?v=40"></script>
 </body>
 
 </html>

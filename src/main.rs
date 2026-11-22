@@ -6,11 +6,13 @@ mod auth;
 mod session;
 mod audit;
 mod rbac;
+mod cache;
 
 use actix_web::{web, App, HttpServer, middleware};
 use actix_files::Files;
 use library::LibraryCache;
-use std::sync::Mutex;
+use cache::CacheStore;
+use std::sync::{Arc, RwLock};
 use std::path::Path;
 use tracing::{warn, info, error};
 use rustls::{ServerConfig, pki_types::CertificateDer};
@@ -64,20 +66,45 @@ async fn main() -> std::io::Result<()> {
     // Initialize audit logger (keep last 1000 events)
     let audit_logger = web::Data::new(audit::AuditLogger::new(1000));
 
-    // Set up library cache
+    // Set up library cache and the local cache (DB snapshots + thumbnails)
     let mut cache = LibraryCache::new();
-    
+
+    let cache_root = config::cache_dir();
+    let store = Arc::new(CacheStore::new(&cache_root)?);
+    info!("Local cache directory: {:?}", store.root());
+
     // Load libraries from the configured path
     let library_path = config::library_path();
+    let snapshot_mode = config::db_snapshot();
     let libraries_path = Path::new(&library_path);
     if libraries_path.exists() {
-        cache.load_libraries(libraries_path)?;
+        cache.load_libraries(libraries_path, store.clone(), snapshot_mode, false)?;
     } else {
         warn!("Libraries directory not found at {:?}", libraries_path);
         warn!("Please configure library_path in config.yaml");
     }
 
-    let cache = web::Data::new(Mutex::new(cache));
+    // Warm the per-library search index and sort orders in the background, so
+    // the first filter/sort click costs nothing instead of 0.3-0.5 s.
+    {
+        let dbs = cache.all_databases();
+        std::thread::spawn(move || {
+            for db in dbs {
+                if let Ok(guard) = db.lock() {
+                    let _ = guard.book_index();
+                }
+                for sort in ["title", "series", "author"] {
+                    if let Ok(guard) = db.lock() {
+                        let _ = guard.sort_set(sort);
+                    }
+                }
+            }
+            info!("Background index warm-up finished");
+        });
+    }
+
+    let cache = web::Data::new(RwLock::new(cache));
+    let store_data = web::Data::new(store.clone());
 
     // Get service binding address
     let service_ip_and_port = config::service_ip_and_port();
@@ -89,6 +116,7 @@ async fn main() -> std::io::Result<()> {
     let server_builder = HttpServer::new(move || {
         App::new()
             .app_data(cache.clone())
+            .app_data(store_data.clone())
             .app_data(users.clone())
             .app_data(session_store.clone())
             .app_data(audit_logger.clone())

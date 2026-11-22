@@ -25,21 +25,69 @@ use tracing::{error, info, warn};
 pub struct Config {
     /// Path to the Calibre libraries directory
     pub library_path: String,
-    
+
     /// IP and port for the Biblio server to bind to
+    #[serde(default = "default_service_addr")]
     pub service_ip_and_port: String,
-    
+
     /// Path to the users.ids file containing user credentials
+    #[serde(default = "default_users_file")]
     pub users_file_path: String,
-    
+
     /// Enable HTTPS/TLS
+    #[serde(default)]
     pub use_https: bool,
-    
+
     /// Path to the SSL/TLS certificate file (PEM format)
+    #[serde(default = "default_cert")]
     pub certificate_path: String,
-    
+
     /// Path to the SSL/TLS private key file (PEM format)
+    #[serde(default = "default_key")]
     pub private_key_path: String,
+
+    /// Local cache directory (DB snapshots + cover thumbnails).
+    /// Relative paths are resolved against the base directory, so the whole
+    /// application folder stays self-contained and movable.
+    #[serde(default = "default_cache_dir")]
+    pub cache_dir: String,
+
+    /// Longest side (pixels) of the generated cover thumbnails served to the grid
+    #[serde(default = "default_thumbnail_size")]
+    pub thumbnail_size: u32,
+
+    /// Snapshot the Calibre database to local cache: "auto" (only for remote /
+    /// different-volume libraries), "always", or "never".
+    #[serde(default = "default_db_snapshot")]
+    pub db_snapshot: String,
+}
+
+fn default_cache_dir() -> String {
+    "cache".to_string()
+}
+
+fn default_service_addr() -> String {
+    "127.0.0.1:8433".to_string()
+}
+
+fn default_users_file() -> String {
+    "users.ids".to_string()
+}
+
+fn default_cert() -> String {
+    "cert.pem".to_string()
+}
+
+fn default_key() -> String {
+    "key.pem".to_string()
+}
+
+fn default_thumbnail_size() -> u32 {
+    200
+}
+
+fn default_db_snapshot() -> String {
+    "auto".to_string()
 }
 
 impl Config {
@@ -73,6 +121,7 @@ impl Config {
         config.users_file_path = Self::resolve_path(&base_dir, &config.users_file_path);
         config.certificate_path = Self::resolve_path(&base_dir, &config.certificate_path);
         config.private_key_path = Self::resolve_path(&base_dir, &config.private_key_path);
+        config.cache_dir = Self::resolve_path(&base_dir, &config.cache_dir);
         
         Ok(config)
     }
@@ -155,6 +204,18 @@ pub fn certificate_path() -> String {
 
 pub fn private_key_path() -> String {
     with(|cfg| cfg.private_key_path.clone())
+}
+
+pub fn cache_dir() -> String {
+    with(|cfg| cfg.cache_dir.clone())
+}
+
+pub fn thumbnail_size() -> u32 {
+    with(|cfg| cfg.thumbnail_size)
+}
+
+pub fn db_snapshot() -> String {
+    with(|cfg| cfg.db_snapshot.clone())
 }
 
 #[cfg(test)]

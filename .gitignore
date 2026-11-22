@@ -29,3 +29,11 @@ config.yaml
 compose.yaml
 note.txt
 users.ids
+
+# Local runtime data / editor backups
+/cache/
+*.bak*
+启动-*.cmd
+
+*.orig
+

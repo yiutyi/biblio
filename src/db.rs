@@ -1,6 +1,11 @@
 use rusqlite::{Connection, Result as SqlResult, OptionalExtension, OpenFlags};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
+
+/// Separator used to join multiple values inside a single SQL column.
+const SEP: char = '\u{1f}';
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Book {
@@ -46,6 +51,33 @@ pub struct Series {
 
 pub struct CalibreDb {
     conn: Connection,
+    // Whole-library caches, loaded once on first access. A Calibre library on a
+    // network share makes the per-row lookup pattern prohibitively slow, so every
+    // list endpoint is served from memory after a single aggregate query.
+    books: OnceLock<Arc<Vec<Book>>>,
+    authors: OnceLock<Arc<Vec<Author>>>,
+    tags: OnceLock<Arc<Vec<Tag>>>,
+    series: OnceLock<Arc<Vec<Series>>>,
+    paths: OnceLock<Arc<HashMap<i32, String>>>,
+    // One precomputed ordering per sort key, built on the first request that
+    // asks for it. Sorting 123k rows costs 300-500 ms; without this cache every
+    // page of the same ordering would pay it again.
+    sorts: OnceLock<Mutex<HashMap<String, Arc<SortSet>>>>,
+    // Lowercased copies of every searchable/filterable field, built once. A
+    // request that filters used to lowercase 123k titles plus their authors on
+    // every keystroke; now it is pure string comparison over prebuilt data.
+    index: OnceLock<Arc<BookIndex>>,
+}
+
+fn split_multi(value: Option<String>) -> Vec<String> {
+    match value {
+        Some(v) => v
+            .split(SEP)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 impl CalibreDb {
@@ -54,85 +86,244 @@ impl CalibreDb {
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY,
         )?;
-        Ok(CalibreDb { conn })
+        Ok(CalibreDb {
+            conn,
+            books: OnceLock::new(),
+            authors: OnceLock::new(),
+            tags: OnceLock::new(),
+            series: OnceLock::new(),
+            paths: OnceLock::new(),
+            sorts: OnceLock::new(),
+            index: OnceLock::new(),
+        })
     }
 
-    pub fn get_all_books(&self) -> SqlResult<Vec<Book>> {
+    /// Number of books in the library. Uses COUNT(*) so the library list can be
+    /// built without materialising every row.
+    pub fn count_books(&self) -> SqlResult<usize> {
+        if let Some(cache) = self.books.get() {
+            return Ok(cache.len());
+        }
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM books", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
+
+    /// All books in the library, ordered by timestamp (newest first).
+    /// Loaded once and kept in memory.
+    pub fn get_all_books(&self) -> SqlResult<Arc<Vec<Book>>> {
+        if let Some(cache) = self.books.get() {
+            return Ok(cache.clone());
+        }
+
+        let books = self.query_books()?;
+        let cache = Arc::new(books);
+        let _ = self.books.set(cache.clone());
+        Ok(cache)
+    }
+
+    fn query_books(&self) -> SqlResult<Vec<Book>> {
+        // One bulk query per relation instead of correlated sub-queries: the old
+        // shape ran ~7 sub-queries for every one of the 123k rows (several
+        // seconds); a handful of GROUP BY scans plus an in-memory merge is a
+        // fraction of that.
+        let mut books: Vec<Book> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, title, has_cover, sort, timestamp, pubdate, series_index
+                 FROM books
+                 ORDER BY timestamp DESC",
+            )?;
+            stmt.query_map([], |row| {
+                Ok(Book {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    has_cover: row.get::<_, Option<i64>>(2)?.unwrap_or(0) != 0,
+                    sort: row.get(3).ok().flatten(),
+                    timestamp: row.get(4).ok().flatten(),
+                    pubdate: row.get(5).ok().flatten(),
+                    series_index: row.get(6).ok().flatten(),
+                    authors: Vec::new(),
+                    tags: Vec::new(),
+                    formats: Vec::new(),
+                    series: None,
+                    comments: None,
+                    publisher: None,
+                    rating: None,
+                    language: None,
+                })
+            })?
+            .collect::<SqlResult<Vec<_>>>()?
+        };
+
+        let mut index = HashMap::with_capacity(books.len());
+        for (pos, book) in books.iter().enumerate() {
+            index.insert(book.id, pos);
+        }
+
+        // book id -> concatenated authors
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, has_cover, sort FROM books ORDER BY timestamp DESC LIMIT 10000"
+            "SELECT bal.book, group_concat(a.name, char(31))
+             FROM books_authors_link bal
+             JOIN authors a ON a.id = bal.author
+             GROUP BY bal.book",
         )?;
-        
-        let books = stmt.query_map([], |row| {
-            let book_id: i32 = row.get(0)?;
-            let title: String = row.get(1)?;
-            let has_cover: bool = row.get(2)?;
-            let sort: Option<String> = row.get(3).ok();
-            
-            let authors = self.get_book_authors(book_id).unwrap_or_default();
-            let (series, series_index) = self.get_book_series(book_id).unwrap_or_default();
-            let tags = self.get_book_tags(book_id).unwrap_or_default();
-            let formats = self.get_book_formats(book_id).unwrap_or_default();
-            let comments = self.get_book_comments(book_id).ok().flatten();
-            
-            Ok(Book {
-                id: book_id,
-                title,
-                authors,
-                series,
-                series_index,
-                tags,
-                comments,
-                publisher: None,
-                pubdate: None,
-                rating: None,
-                timestamp: None,
-                language: None,
-                has_cover,
-                formats,
-                sort,
-            })
-        })?.collect::<SqlResult<Vec<_>>>()?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        for row in rows {
+            let (book_id, names) = row?;
+            if let Some(pos) = index.get(&book_id) {
+                books[*pos].authors = split_multi(names);
+            }
+        }
+
+        // tags
+        let mut stmt = self.conn.prepare(
+            "SELECT btl.book, group_concat(t.name, char(31))
+             FROM books_tags_link btl
+             JOIN tags t ON t.id = btl.tag
+             GROUP BY btl.book",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        for row in rows {
+            let (book_id, names) = row?;
+            if let Some(pos) = index.get(&book_id) {
+                books[*pos].tags = split_multi(names);
+            }
+        }
+
+        // formats
+        let mut stmt = self
+            .conn
+            .prepare("SELECT book, group_concat(format, char(31)) FROM data GROUP BY book")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        for row in rows {
+            let (book_id, formats) = row?;
+            if let Some(pos) = index.get(&book_id) {
+                books[*pos].formats = split_multi(formats);
+            }
+        }
+
+        // series (one name per book, like the previous LIMIT 1 sub-query)
+        let mut stmt = self.conn.prepare(
+            "SELECT bsl.book, s.name
+             FROM books_series_link bsl
+             JOIN series s ON s.id = bsl.series
+             GROUP BY bsl.book",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        for row in rows {
+            let (book_id, name) = row?;
+            if let Some(pos) = index.get(&book_id) {
+                books[*pos].series = name;
+            }
+        }
+
+        // comments (first row per book)
+        let mut stmt = self
+            .conn
+            .prepare("SELECT book, text FROM comments GROUP BY book")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        for row in rows {
+            let (book_id, text) = row?;
+            if let Some(pos) = index.get(&book_id) {
+                books[*pos].comments = text;
+            }
+        }
+
+        // publishers
+        let mut stmt = self.conn.prepare(
+            "SELECT bpl.book, p.name
+             FROM books_publishers_link bpl
+             JOIN publishers p ON p.id = bpl.publisher
+             GROUP BY bpl.book",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        for row in rows {
+            let (book_id, name) = row?;
+            if let Some(pos) = index.get(&book_id) {
+                books[*pos].publisher = name;
+            }
+        }
+
+        // ratings
+        let mut stmt = self.conn.prepare(
+            "SELECT brl.book, r.rating
+             FROM books_ratings_link brl
+             JOIN ratings r ON r.id = brl.rating
+             GROUP BY brl.book",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<i32>>(1)?))
+        })?;
+        for row in rows {
+            let (book_id, rating) = row?;
+            if let Some(pos) = index.get(&book_id) {
+                books[*pos].rating = rating;
+            }
+        }
+
+        // languages
+        let mut stmt = self.conn.prepare(
+            "SELECT bll.book, l.lang_code
+             FROM books_languages_link bll
+             JOIN languages l ON l.id = bll.lang_code
+             GROUP BY bll.book",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        for row in rows {
+            let (book_id, lang) = row?;
+            if let Some(pos) = index.get(&book_id) {
+                books[*pos].language = lang;
+            }
+        }
 
         Ok(books)
     }
 
+    /// Look up a single book from the in-memory cache.
     pub fn get_book(&self, book_id: i32) -> SqlResult<Option<Book>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, has_cover, sort FROM books WHERE id = ?"
-        )?;
-        
-        let book = stmt.query_row([book_id], |row| {
-            let id: i32 = row.get(0)?;
-            let title: String = row.get(1)?;
-            let has_cover: bool = row.get(2)?;
-            let sort: Option<String> = row.get(3).ok();
-            
-            let authors = self.get_book_authors(id).unwrap_or_default();
-            let (series, series_index) = self.get_book_series(id).unwrap_or_default();
-            let tags = self.get_book_tags(id).unwrap_or_default();
-            let formats = self.get_book_formats(id).unwrap_or_default();
-            let comments = self.get_book_comments(id).ok().flatten();
-            
-            Ok(Book {
-                id,
-                title,
-                authors,
-                series,
-                series_index,
-                tags,
-                comments,
-                publisher: None,
-                pubdate: None,
-                rating: None,
-                timestamp: None,
-                language: None,
-                has_cover,
-                formats,
-                sort,
-            })
-        }).optional()?;
+        let books = self.get_all_books()?;
+        Ok(books.iter().find(|b| b.id == book_id).cloned())
+    }
 
-        Ok(book)
+    /// Relative path of a book directory inside the library
+    /// (e.g. "作者/书名 (123)"), taken from the Calibre `books.path` column.
+    pub fn get_book_path(&self, book_id: i32) -> Option<String> {
+        self.book_paths().ok().and_then(|m| m.get(&book_id).cloned())
+    }
+
+    pub fn book_paths(&self) -> SqlResult<Arc<HashMap<i32, String>>> {
+        if let Some(cache) = self.paths.get() {
+            return Ok(cache.clone());
+        }
+
+        let mut stmt = self.conn.prepare("SELECT id, path FROM books")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i32>(0)?,
+                    row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                ))
+            })?
+            .collect::<SqlResult<HashMap<i32, String>>>()?;
+
+        let cache = Arc::new(rows);
+        let _ = self.paths.set(cache.clone());
+        Ok(cache)
     }
 
     pub fn get_book_authors(&self, book_id: i32) -> SqlResult<Vec<String>> {
@@ -180,7 +371,11 @@ impl CalibreDb {
         Ok(result.unwrap_or((None, None)))
     }
 
-    pub fn get_all_authors(&self) -> SqlResult<Vec<Author>> {
+    pub fn get_all_authors(&self) -> SqlResult<Arc<Vec<Author>>> {
+        if let Some(cache) = self.authors.get() {
+            return Ok(cache.clone());
+        }
+
         let mut stmt = self.conn.prepare(
             "SELECT a.id, a.name, a.sort, COUNT(ba.book) as book_count 
              FROM authors a 
@@ -196,12 +391,19 @@ impl CalibreDb {
                 sort: row.get(2).ok(),
                 book_count: row.get(3)?,
             })
-        })?.collect::<SqlResult<Vec<_>>>()?;
+        })?
+        .collect::<SqlResult<Vec<_>>>()?;
 
-        Ok(authors)
+        let cache = Arc::new(authors);
+        let _ = self.authors.set(cache.clone());
+        Ok(cache)
     }
 
-    pub fn get_all_tags(&self) -> SqlResult<Vec<Tag>> {
+    pub fn get_all_tags(&self) -> SqlResult<Arc<Vec<Tag>>> {
+        if let Some(cache) = self.tags.get() {
+            return Ok(cache.clone());
+        }
+
         let mut stmt = self.conn.prepare(
             "SELECT t.id, t.name, COUNT(btl.book) as book_count 
              FROM tags t 
@@ -216,12 +418,19 @@ impl CalibreDb {
                 name: row.get(1)?,
                 book_count: row.get(2)?,
             })
-        })?.collect::<SqlResult<Vec<_>>>()?;
+        })?
+        .collect::<SqlResult<Vec<_>>>()?;
 
-        Ok(tags)
+        let cache = Arc::new(tags);
+        let _ = self.tags.set(cache.clone());
+        Ok(cache)
     }
 
-    pub fn get_all_series(&self) -> SqlResult<Vec<Series>> {
+    pub fn get_all_series(&self) -> SqlResult<Arc<Vec<Series>>> {
+        if let Some(cache) = self.series.get() {
+            return Ok(cache.clone());
+        }
+
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.name, s.sort, COUNT(bs.book) as book_count 
              FROM series s 
@@ -237,12 +446,35 @@ impl CalibreDb {
                 sort: row.get(2).ok(),
                 book_count: row.get(3)?,
             })
-        })?.collect::<SqlResult<Vec<_>>>()?;
+        })?
+        .collect::<SqlResult<Vec<_>>>()?;
 
-        Ok(series)
+        let cache = Arc::new(series);
+        let _ = self.series.set(cache.clone());
+        Ok(cache)
     }
 
-    pub fn get_book_formats(&self, book_id: i32) -> SqlResult<Vec<String>> {
+    /// How many books carry each format, for the format filter sidebar
+    /// (the browser no longer receives the whole library, so it cannot count).
+    pub fn format_stats(&self) -> SqlResult<Vec<(String, usize)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT format, COUNT(*) FROM data GROUP BY format ORDER BY format")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+            })?
+            .collect::<SqlResult<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_book_formats(&self, book_id: i32) -> SqlResult<Vec<String>> {        if let Ok(books) = self.get_all_books() {
+            if let Some(book) = books.iter().find(|b| b.id == book_id) {
+                return Ok(book.formats.clone());
+            }
+            return Ok(Vec::new());
+        }
+
         let mut stmt = self.conn.prepare(
             "SELECT format FROM data WHERE book = ? ORDER BY format"
         )?;
@@ -265,4 +497,152 @@ impl CalibreDb {
 
         Ok(comments)
     }
+
+    /// Build (once) the lowercased filter/search index.
+    pub fn book_index(&self) -> SqlResult<Arc<BookIndex>> {
+        if let Some(hit) = self.index.get() {
+            return Ok(hit.clone());
+        }
+
+        let books = self.get_all_books()?;
+        let n = books.len();
+        let mut search: Vec<String> = Vec::with_capacity(n);
+        let mut authors: Vec<Vec<String>> = Vec::with_capacity(n);
+        let mut tags: Vec<Vec<String>> = Vec::with_capacity(n);
+        let mut series: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut formats: Vec<Vec<String>> = Vec::with_capacity(n);
+
+        for b in books.iter() {
+            let authors_lower: Vec<String> = b.authors.iter().map(|a| a.to_lowercase()).collect();
+            let series_lower = b.series.as_ref().map(|s| s.to_lowercase());
+
+            let mut joined = String::with_capacity(b.title.len() + 48);
+            joined.push_str(&b.title.to_lowercase());
+            joined.push('\u{1}');
+            for a in &authors_lower {
+                joined.push_str(a);
+                joined.push('\u{1}');
+            }
+            if let Some(s) = &series_lower {
+                joined.push_str(s);
+            }
+
+            search.push(joined);
+            authors.push(authors_lower);
+            tags.push(b.tags.iter().map(|t| t.to_lowercase()).collect());
+            series.push(series_lower);
+            formats.push(b.formats.iter().map(|f| f.to_lowercase()).collect());
+        }
+
+        let idx = Arc::new(BookIndex { search, authors, tags, series, formats });
+        if self.index.set(idx.clone()).is_err() {
+            if let Some(existing) = self.index.get() {
+                return Ok(existing.clone());
+            }
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        Ok(idx)
+    }
+
+    /// Precomputed ordering for one sort key. `order` lists book indices in
+    /// sorted position order (so page N is a plain slice); `rank` maps a book
+    /// index back to its position, which lets a filtered subset be ordered by
+    /// lookup instead of re-sorting the whole library.
+    pub fn sort_set(&self, sort: &str) -> SqlResult<Arc<SortSet>> {
+        let books = self.get_all_books()?;
+
+        {
+            let cache = self.sorts.get_or_init(|| Mutex::new(HashMap::new()));
+            if let Some(hit) = cache.lock().unwrap().get(sort).cloned() {
+                return Ok(hit);
+            }
+        }
+
+        let n = books.len();
+        let mut order: Vec<usize> = (0..n).collect();
+        match sort {
+            "title" => order.sort_by_cached_key(|&i| {
+                books[i]
+                    .sort
+                    .clone()
+                    .unwrap_or_else(|| books[i].title.clone())
+                    .to_lowercase()
+            }),
+            "author" => {
+                // `authors` carries the "last name first" sort value; map the
+                // display name used on books to that.
+                let authors = self.get_all_authors()?;
+                let sort_names: HashMap<String, String> = authors
+                    .iter()
+                    .map(|a| {
+                        (
+                            a.name.to_lowercase(),
+                            a.sort.clone().unwrap_or_else(|| a.name.clone()).to_lowercase(),
+                        )
+                    })
+                    .collect();
+
+                order.sort_by_cached_key(|&i| {
+                    books[i]
+                        .authors
+                        .first()
+                        .map(|a| {
+                            sort_names
+                                .get(&a.to_lowercase())
+                                .cloned()
+                                .unwrap_or_else(|| a.to_lowercase())
+                        })
+                        .unwrap_or_default()
+                });
+            }
+            "series" => order.sort_by_cached_key(|&i| {
+                let b = &books[i];
+                let name = b
+                    .series
+                    .as_ref()
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_else(|| "\u{10FFFF}".to_string());
+                let index = b.series_index.map(|x| (x * 1000.0) as i64).unwrap_or(i64::MAX);
+                (name, index)
+            }),
+            _ => {} // unknown key: keep the database order
+        }
+
+        let mut rank = vec![0usize; n];
+        for (pos, &idx) in order.iter().enumerate() {
+            rank[idx] = pos;
+        }
+
+        let set = Arc::new(SortSet { order, rank });
+        let cache = self.sorts.get_or_init(|| Mutex::new(HashMap::new()));
+        cache.lock().unwrap().insert(sort.to_string(), set.clone());
+        Ok(set)
+    }
+
+    /// Load every cache up front so the first page request does not stall.
+    pub fn warm_cache(&self) -> SqlResult<()> {
+        self.get_all_books()?;
+        self.book_paths()?;
+        self.get_all_authors()?;
+        self.get_all_tags()?;
+        self.get_all_series()?;
+        Ok(())
+    }
+}
+
+pub struct SortSet {
+    pub order: Vec<usize>,
+    pub rank: Vec<usize>,
+}
+
+/// Lowercased, per-book copies of every field a filter can touch. Titles,
+/// authors and series are additionally concatenated into one search string
+/// (fields separated by `\u{1}` so a term cannot match across a boundary),
+/// which turns a text search into a single `contains` per book.
+pub struct BookIndex {
+    pub search: Vec<String>,
+    pub authors: Vec<Vec<String>>,
+    pub tags: Vec<Vec<String>>,
+    pub series: Vec<Option<String>>,
+    pub formats: Vec<Vec<String>>,
 }

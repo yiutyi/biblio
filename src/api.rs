@@ -1,6 +1,9 @@
 use actix_web::{web, HttpResponse, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::{Arc, RwLock};
+use actix_files::NamedFile;
+use actix_web::http::header::{ContentDisposition, DispositionType, CacheControl, CacheDirective, DispositionParam};
+use crate::cache::CacheStore;
 use crate::library::{LibraryCache, LibraryMetadata};
 use crate::db::Book;
 use crate::config;
@@ -21,8 +24,213 @@ pub struct ApiResponse<T> {
 
 #[derive(Debug, Deserialize)]
 pub struct FilterQuery {
-    pub formats: Option<Vec<String>>,
+    /// Formats joined with '|' (e.g. "EPUB|PDF"). A single value works too.
+    pub formats: Option<String>,
     pub search: Option<String>,
+    /// Author / tag / series names joined with '|'
+    pub authors: Option<String>,
+    pub tags: Option<String>,
+    pub series: Option<String>,
+    /// recent (default, newest first) | title | author | series
+    pub sort: Option<String>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BooksPage<'a> {
+    pub success: bool,
+    pub data: &'a [Book],
+    pub total: usize,
+    pub offset: usize,
+    pub error: Option<String>,
+}
+
+fn split_list(value: &Option<String>) -> Vec<String> {
+    match value {
+        Some(v) => v
+            .split('|')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase())
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Filter the in-memory book set and return one page of it.
+///
+/// Everything stays server-side: the browser only ever downloads the page it is
+/// about to render, instead of the whole library (60 MB at 123k books).
+pub async fn get_books(
+    cache: web::Data<RwLock<LibraryCache>>,
+    path: web::Path<String>,
+    query: web::Query<FilterQuery>,
+) -> Result<HttpResponse> {
+    let library_id = path.into_inner();
+    let query = query.into_inner();
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let offset = query.offset.unwrap_or(0);
+
+    let search = query.search.clone();
+    let formats = split_list(&query.formats);
+    let authors = split_list(&query.authors);
+    let tags = split_list(&query.tags);
+    let series = split_list(&query.series);
+    let sort = query.sort.clone().unwrap_or_else(|| "recent".to_string());
+
+    // Filtering/sorting 123k rows is CPU work; keep it off the async workers.
+    let work = {
+        let cache = cache.clone();
+        web::block(move || -> std::result::Result<(Vec<Book>, usize), String> {
+            let (books, db) = {
+                let guard = cache.read().unwrap();
+                let db = guard
+                    .get_database(&library_id)
+                    .ok_or_else(|| "Library not found".to_string())?;
+                let books = db
+                    .lock()
+                    .unwrap()
+                    .get_all_books()
+                    .map_err(|e| e.to_string())?;
+                (books, db)
+            };
+
+            let filtering = search
+                .as_ref()
+                .map(|t| !t.trim().is_empty())
+                .unwrap_or(false)
+                || !authors.is_empty()
+                || !tags.is_empty()
+                || !series.is_empty()
+                || !formats.is_empty();
+
+            // Fast path: no filters. The ordering is precomputed, so a page is
+            // just a slice of indices - no per-request sorting at all.
+            if !filtering {
+                let total = books.len();
+                let order = if sort == "recent" {
+                    None
+                } else {
+                    Some(
+                        db.lock()
+                            .unwrap()
+                            .sort_set(&sort)
+                            .map_err(|e| e.to_string())?,
+                    )
+                };
+
+                let pick = |i: usize| books[i].clone();
+                let page: Vec<Book> = match &order {
+                    Some(set) => set
+                        .order
+                        .iter()
+                        .skip(offset)
+                        .take(limit)
+                        .map(|&i| pick(i))
+                        .collect(),
+                    None => books.iter().skip(offset).take(limit).cloned().collect(),
+                };
+                return Ok((page, total));
+            }
+
+            // Filtered path: keep indices, order them by the precomputed rank
+            // when a sort is active, then slice. All field comparisons run
+            // against the prebuilt lowercase index, so a filter costs string
+            // scans instead of 123k lowercase allocations per request.
+            let idx = db
+                .lock()
+                .unwrap()
+                .book_index()
+                .map_err(|e| e.to_string())?;
+
+            let mut filtered: Vec<usize> = (0..idx.search.len()).collect();
+
+            if let Some(term) = &search {
+                if !term.trim().is_empty() {
+                    let needle = term.to_lowercase();
+                    filtered.retain(|&i| idx.search[i].contains(&needle));
+                }
+            }
+
+            if !authors.is_empty() {
+                filtered.retain(|&i| {
+                    idx.authors[i]
+                        .iter()
+                        .any(|a| authors.iter().any(|sel| a == sel))
+                });
+            }
+
+            if !tags.is_empty() {
+                filtered.retain(|&i| {
+                    idx.tags[i]
+                        .iter()
+                        .any(|t| tags.iter().any(|sel| t == sel))
+                });
+            }
+
+            if !series.is_empty() {
+                filtered.retain(|&i| {
+                    idx.series[i]
+                        .as_ref()
+                        .map(|s| series.iter().any(|sel| s == sel))
+                        .unwrap_or(false)
+                });
+            }
+
+            if !formats.is_empty() {
+                filtered.retain(|&i| {
+                    idx.formats[i]
+                        .iter()
+                        .any(|f| formats.iter().any(|sel| f == sel))
+                });
+            }
+
+            if sort != "recent" {
+                let set = db
+                    .lock()
+                    .unwrap()
+                    .sort_set(&sort)
+                    .map_err(|e| e.to_string())?;
+                filtered.sort_by_key(|&i| set.rank[i]);
+            }
+
+            let total = filtered.len();
+            let page: Vec<Book> = filtered
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(|i| books[i].clone())
+                .collect();
+            Ok((page, total))
+        })
+        .await
+    };
+
+    match work {
+        Ok(Ok((page, total))) => Ok(HttpResponse::Ok().json(BooksPage {
+            success: true,
+            data: &page,
+            total,
+            offset,
+            error: None,
+        })),
+        Ok(Err(message)) if message == "Library not found" => Ok(HttpResponse::NotFound().json(ApiResponse::<Vec<Book>> {
+            success: false,
+            data: None,
+            error: Some(message),
+        })),
+        Ok(Err(message)) => Ok(HttpResponse::InternalServerError().json(ApiResponse::<Vec<Book>> {
+            success: false,
+            data: None,
+            error: Some(message),
+        })),
+        Err(e) => Ok(HttpResponse::InternalServerError().json(ApiResponse::<Vec<Book>> {
+            success: false,
+            data: None,
+            error: Some(format!("Blocking task failed: {}", e)),
+        })),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,9 +331,9 @@ pub struct UserResponse {
 }
 
 pub async fn get_libraries(
-    cache: web::Data<Mutex<LibraryCache>>,
+    cache: web::Data<RwLock<LibraryCache>>,
 ) -> Result<HttpResponse> {
-    let cache = cache.lock().unwrap();
+    let cache = cache.read().unwrap();
     let libraries = cache.get_libraries();
     
     Ok(HttpResponse::Ok().json(ApiResponse {
@@ -136,11 +344,11 @@ pub async fn get_libraries(
 }
 
 pub async fn get_library(
-    cache: web::Data<Mutex<LibraryCache>>,
+    cache: web::Data<RwLock<LibraryCache>>,
     path: web::Path<String>,
 ) -> Result<HttpResponse> {
     let library_id = path.into_inner();
-    let cache = cache.lock().unwrap();
+    let cache = cache.read().unwrap();
     
     if let Some(lib) = cache.get_library(&library_id) {
         Ok(HttpResponse::Ok().json(ApiResponse {
@@ -157,75 +365,15 @@ pub async fn get_library(
     }
 }
 
-pub async fn get_books(
-    cache: web::Data<Mutex<LibraryCache>>,
-    path: web::Path<String>,
-    query: web::Query<FilterQuery>,
-) -> Result<HttpResponse> {
-    let library_id = path.into_inner();
-    let cache = cache.lock().unwrap();
-    
-    if let Some(db) = cache.get_database(&library_id) {
-        match db.get_all_books() {
-            Ok(mut books) => {
-                // Apply search filter if provided
-                if let Some(search_term) = &query.search {
-                    let search_lower = search_term.to_lowercase();
-                    books.retain(|book| {
-                        book.title.to_lowercase().contains(&search_lower)
-                            || book.authors.iter().any(|a| a.to_lowercase().contains(&search_lower))
-                    });
-                }
-
-                // Apply format filter if provided
-                if let Some(requested_formats) = &query.formats {
-                    let requested_formats_upper: Vec<String> = 
-                        requested_formats.iter().map(|f| f.to_uppercase()).collect();
-                    
-                    books.retain(|book| {
-                        match db.get_book_formats(book.id) {
-                            Ok(available_formats) => {
-                                available_formats.iter().any(|fmt| {
-                                    requested_formats_upper.contains(&fmt.to_uppercase())
-                                })
-                            }
-                            Err(_) => false,
-                        }
-                    });
-                }
-
-                Ok(HttpResponse::Ok().json(ApiResponse {
-                    success: true,
-                    data: Some(books),
-                    error: None,
-                }))
-            }
-            Err(e) => {
-                Ok(HttpResponse::InternalServerError().json(ApiResponse::<Vec<Book>> {
-                    success: false,
-                    data: None,
-                    error: Some(format!("Database error: {}", e)),
-                }))
-            }
-        }
-    } else {
-        Ok(HttpResponse::NotFound().json(ApiResponse::<Vec<Book>> {
-            success: false,
-            data: None,
-            error: Some("Library not found".to_string()),
-        }))
-    }
-}
-
 pub async fn get_book(
-    cache: web::Data<Mutex<LibraryCache>>,
+    cache: web::Data<RwLock<LibraryCache>>,
     path: web::Path<(String, i32)>,
 ) -> Result<HttpResponse> {
     let (library_id, book_id) = path.into_inner();
-    let cache = cache.lock().unwrap();
+    let cache = cache.read().unwrap();
     
     if let Some(db) = cache.get_database(&library_id) {
-        match db.get_book(book_id) {
+        match db.lock().unwrap().get_book(book_id) {
             Ok(Some(book)) => {
                 Ok(HttpResponse::Ok().json(ApiResponse {
                     success: true,
@@ -258,14 +406,14 @@ pub async fn get_book(
 }
 
 pub async fn get_authors(
-    cache: web::Data<Mutex<LibraryCache>>,
+    cache: web::Data<RwLock<LibraryCache>>,
     path: web::Path<String>,
 ) -> Result<HttpResponse> {
     let library_id = path.into_inner();
-    let cache = cache.lock().unwrap();
+    let cache = cache.read().unwrap();
     
     if let Some(db) = cache.get_database(&library_id) {
-        match db.get_all_authors() {
+        match db.lock().unwrap().get_all_authors() {
             Ok(authors) => {
                 Ok(HttpResponse::Ok().json(ApiResponse {
                     success: true,
@@ -290,15 +438,56 @@ pub async fn get_authors(
     }
 }
 
-pub async fn get_tags(
-    cache: web::Data<Mutex<LibraryCache>>,
+#[derive(Debug, Serialize)]
+pub struct FormatStat {
+    pub format: String,
+    pub count: usize,
+}
+
+pub async fn get_format_stats(
+    cache: web::Data<RwLock<LibraryCache>>,
     path: web::Path<String>,
 ) -> Result<HttpResponse> {
     let library_id = path.into_inner();
-    let cache = cache.lock().unwrap();
+    let cache = cache.read().unwrap();
+
+    if let Some(db) = cache.get_database(&library_id) {
+        match db.lock().unwrap().format_stats() {
+            Ok(stats) => {
+                let data: Vec<FormatStat> = stats
+                    .into_iter()
+                    .map(|(format, count)| FormatStat { format, count })
+                    .collect();
+                Ok(HttpResponse::Ok().json(ApiResponse {
+                    success: true,
+                    data: Some(data),
+                    error: None,
+                }))
+            }
+            Err(e) => Ok(HttpResponse::InternalServerError().json(ApiResponse {
+                success: false,
+                data: None as Option<Vec<FormatStat>>,
+                error: Some(format!("Database error: {}", e)),
+            })),
+        }
+    } else {
+        Ok(HttpResponse::NotFound().json(ApiResponse {
+            success: false,
+            data: None as Option<Vec<FormatStat>>,
+            error: Some("Library not found".to_string()),
+        }))
+    }
+}
+
+pub async fn get_tags(
+    cache: web::Data<RwLock<LibraryCache>>,
+    path: web::Path<String>,
+) -> Result<HttpResponse> {
+    let library_id = path.into_inner();
+    let cache = cache.read().unwrap();
     
     if let Some(db) = cache.get_database(&library_id) {
-        match db.get_all_tags() {
+        match db.lock().unwrap().get_all_tags() {
             Ok(tags) => {
                 Ok(HttpResponse::Ok().json(ApiResponse {
                     success: true,
@@ -324,14 +513,14 @@ pub async fn get_tags(
 }
 
 pub async fn get_series(
-    cache: web::Data<Mutex<LibraryCache>>,
+    cache: web::Data<RwLock<LibraryCache>>,
     path: web::Path<String>,
 ) -> Result<HttpResponse> {
     let library_id = path.into_inner();
-    let cache = cache.lock().unwrap();
+    let cache = cache.read().unwrap();
     
     if let Some(db) = cache.get_database(&library_id) {
-        match db.get_all_series() {
+        match db.lock().unwrap().get_all_series() {
             Ok(series) => {
                 Ok(HttpResponse::Ok().json(ApiResponse {
                     success: true,
@@ -356,62 +545,80 @@ pub async fn get_series(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CoverQuery {
+    /// "full" returns the original scan; anything else returns a cached thumbnail
+    pub size: Option<String>,
+}
+
 pub async fn get_book_cover(
-    cache: web::Data<Mutex<LibraryCache>>,
+    cache: web::Data<RwLock<LibraryCache>>,
+    store: web::Data<Arc<CacheStore>>,
     path: web::Path<(String, i32)>,
+    query: web::Query<CoverQuery>,
 ) -> Result<HttpResponse> {
     let (library_id, book_id) = path.into_inner();
-    let cache = cache.lock().unwrap();
-    
-    if let Some(lib) = cache.get_library(&library_id) {
-        // Find book directory by searching for pattern "*({book_id})"
-        // Calibre stores books as: {library}/{author}/{book_title ({book_id})}/cover.jpg
-        let pattern = format!("({})", book_id);
-        
-        if let Ok(entries) = std::fs::read_dir(&lib.path) {
-            for author_dir in entries.flatten() {
-                let author_path = author_dir.path();
-                if author_path.is_dir() {
-                    if let Ok(book_entries) = std::fs::read_dir(&author_path) {
-                        for book_dir in book_entries.flatten() {
-                            let book_path = book_dir.path();
-                            if book_path.is_dir() {
-                                let dir_name = book_path.file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("");
-                                
-                                if dir_name.ends_with(&pattern) {
-                                    let cover_path = book_path.join("cover.jpg");
-                                    if cover_path.exists() {
-                                        if let Ok(data) = std::fs::read(&cover_path) {
-                                            return Ok(HttpResponse::Ok()
-                                                .content_type("image/jpeg")
-                                                .body(data));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+    let want_full = query.size.as_deref() == Some("full");
+
+    // Resolve the book folder from `books.path` (one indexed lookup), then do
+    // all file work off the async worker threads.
+    let resolved = {
+        let cache = cache.read().unwrap();
+        match (cache.get_library(&library_id), cache.get_database(&library_id)) {
+            (Some(lib), Some(db)) => db
+                .lock()
+                .unwrap()
+                .get_book_path(book_id)
+                .map(|rel| lib.path.join(rel).join("cover.jpg")),
+            _ => None,
+        }
+    };
+
+    let cover_path = match resolved {
+        Some(p) => p,
+        None => return Ok(HttpResponse::NotFound().finish()),
+    };
+
+    let store = store.get_ref().clone();
+    let thumb_size = config::thumbnail_size();
+    let library_for_cache = library_id.clone();
+
+    let bytes = web::block(move || -> Option<Vec<u8>> {
+        if want_full {
+            return std::fs::read(&cover_path).ok();
+        }
+        // Cache a downscaled JPEG on the local disk; the grid then never re-reads
+        // multi-hundred-KB scans from the (possibly remote) library.
+        if let Ok(thumb) = store.ensure_thumbnail(&cover_path, &library_for_cache, book_id, thumb_size) {
+            if let Ok(data) = std::fs::read(&thumb) {
+                return Some(data);
             }
         }
-        // If not found, return 404
-        Ok(HttpResponse::NotFound().finish())
-    } else {
-        Ok(HttpResponse::NotFound().finish())
+        std::fs::read(&cover_path).ok()
+    })
+    .await;
+
+    match bytes {
+        Ok(Some(data)) => Ok(HttpResponse::Ok()
+            .content_type("image/jpeg")
+            .insert_header(CacheControl(vec![
+                CacheDirective::Public,
+                CacheDirective::MaxAge(604_800),
+            ]))
+            .body(data)),
+        _ => Ok(HttpResponse::NotFound().finish()),
     }
 }
 
 pub async fn get_book_formats(
-    cache: web::Data<Mutex<LibraryCache>>,
+    cache: web::Data<RwLock<LibraryCache>>,
     path: web::Path<(String, i32)>,
 ) -> Result<HttpResponse> {
     let (library_id, book_id) = path.into_inner();
-    let cache = cache.lock().unwrap();
+    let cache = cache.read().unwrap();
     
     if let Some(db) = cache.get_database(&library_id) {
-        match db.get_book_formats(book_id) {
+        match db.lock().unwrap().get_book_formats(book_id) {
             Ok(formats) => {
                 Ok(HttpResponse::Ok().json(ApiResponse {
                     success: true,
@@ -437,112 +644,124 @@ pub async fn get_book_formats(
 }
 
 pub async fn get_book_file(
-    cache: web::Data<Mutex<LibraryCache>>,
+    req: actix_web::HttpRequest,
+    cache: web::Data<RwLock<LibraryCache>>,
     path: web::Path<(String, i32, String)>,
 ) -> Result<HttpResponse> {
     let (library_id, book_id, format) = path.into_inner();
-    let cache = cache.lock().unwrap();
-    
-    if let Some(lib) = cache.get_library(&library_id) {
-        // Find book directory by searching for pattern "*({book_id})"
-        // Calibre stores books as: {library}/{author}/{book_title ({book_id})}/
-        let pattern = format!("({})", book_id);
-        let format_upper = format.to_uppercase();
-        
-        if let Ok(entries) = std::fs::read_dir(&lib.path) {
-            for author_dir in entries.flatten() {
-                let author_path = author_dir.path();
-                if author_path.is_dir() {
-                    if let Ok(book_entries) = std::fs::read_dir(&author_path) {
-                        for book_dir in book_entries.flatten() {
-                            let book_path = book_dir.path();
-                            if book_path.is_dir() {
-                                let dir_name = book_path.file_name()
+    let format_upper = format.to_uppercase();
+
+    // Locate the requested file inside the one book folder on the blocking
+    // pool (a directory scan on a network share must not stall an async worker),
+    // then release the cache lock before streaming.
+    let locate = {
+        let cache = cache.clone();
+        let library_id = library_id.clone();
+        let format_upper = format_upper.clone();
+        web::block(move || -> Option<(std::path::PathBuf, String)> {
+            let mut found = None;
+            {
+                let cache = cache.read().unwrap();
+                if let (Some(lib), Some(db)) =
+                    (cache.get_library(&library_id), cache.get_database(&library_id))
+                {
+                    if let Some(rel_path) = db.lock().unwrap().get_book_path(book_id) {
+                        let book_path = lib.path.clone().join(rel_path);
+                        for entry in std::fs::read_dir(&book_path).ok()?.flatten() {
+                            let file_path = entry.path();
+                            if !file_path.is_file() {
+                                continue;
+                            }
+                            let matches = file_path
+                                .extension()
+                                .map(|e| e.to_string_lossy().to_uppercase() == format_upper)
+                                .unwrap_or(false);
+                            if matches {
+                                let name = file_path
+                                    .file_name()
                                     .and_then(|n| n.to_str())
-                                    .unwrap_or("");
-                                
-                                if dir_name.ends_with(&pattern) {
-                                    // Look for the file with the matching format
-                                    if let Ok(file_entries) = std::fs::read_dir(&book_path) {
-                                        for file_entry in file_entries.flatten() {
-                                            let file_path = file_entry.path();
-                                            if file_path.is_file() {
-                                                if let Some(ext) = file_path.extension() {
-                                                    if ext.to_string_lossy().to_uppercase() == format_upper {
-                                                        if let Ok(data) = std::fs::read(&file_path) {
-                                                            let content_type = match format_upper.as_str() {
-                                                                "EPUB" => "application/epub+zip",
-                                                                "PDF" => "application/pdf",
-                                                                "MOBI" => "application/x-mobipocket-ebook",
-                                                                "AZW" => "application/vnd.amazon.ebook",
-                                                                "AZW3" => "application/vnd.amazon.ebook",
-                                                                "HTML" => "text/html",
-                                                                "TXT" => "text/plain; charset=utf-8",
-                                                                _ => "application/octet-stream",
-                                                            };
-                                                            
-                                                            let filename = file_path.file_name()
-                                                                .and_then(|n| n.to_str())
-                                                                .unwrap_or("book");
-                                                            
-                                                            return Ok(HttpResponse::Ok()
-                                                                .content_type(content_type)
-                                                                .insert_header(("Content-Disposition", format!("inline; filename=\"{}\"", filename)))
-                                                                .body(data));
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                    .unwrap_or("book")
+                                    .to_string();
+                                found = Some((file_path, name));
+                                break;
                             }
                         }
                     }
                 }
             }
+            found
+        })
+        .await
+    };
+    let target = match locate {
+        Ok(target) => target,
+        Err(_) => None,
+    };
+
+    match target {
+        Some((file_path, filename)) => {
+            // Streaming (range requests supported) instead of loading the whole
+            // book into memory: a 50 MB PDF no longer allocates 50 MB per request.
+            let file = NamedFile::open_async(&file_path).await?;
+            // A plain `filename=` parameter is latin1-only, so Chinese titles
+            // turned into mojibake; browsers fall back to the URL otherwise.
+            let header_name = if filename.is_ascii() {
+                filename
+            } else {
+                format!("book.{}", format.to_lowercase())
+            };
+            let file = file.set_content_disposition(ContentDisposition {
+                disposition: DispositionType::Inline,
+                parameters: vec![DispositionParam::Filename(header_name)],
+            });
+            Ok(file.into_response(&req))
         }
-        // If not found, return 404
-        Ok(HttpResponse::NotFound().finish())
-    } else {
-        Ok(HttpResponse::NotFound().finish())
+        None => Ok(HttpResponse::NotFound().finish()),
     }
 }
 
 pub async fn refresh_libraries(
-    cache: web::Data<Mutex<LibraryCache>>,
+    cache: web::Data<RwLock<LibraryCache>>,
+    store: web::Data<Arc<CacheStore>>,
 ) -> Result<HttpResponse> {
-    let mut cache = cache.lock().unwrap();
     let library_path = config::library_path();
-    let libraries_path = std::path::Path::new(&library_path);
-    
-    // Clear and reload the cache
-    cache.clear();
-    
-    if libraries_path.exists() {
-        match cache.load_libraries(libraries_path) {
-            Ok(_) => {
-                let libraries = cache.get_libraries();
-                Ok(HttpResponse::Ok().json(ApiResponse {
-                    success: true,
-                    data: Some(libraries),
-                    error: None,
-                }))
-            },
-            Err(e) => {
-                Ok(HttpResponse::InternalServerError().json(ApiResponse {
-                    success: false,
-                    data: None::<Vec<LibraryMetadata>>,
-                    error: Some(format!("Failed to refresh libraries: {}", e)),
-                }))
-            }
-        }
-    } else {
-        Ok(HttpResponse::InternalServerError().json(ApiResponse {
+    let snapshot_mode = config::db_snapshot();
+    let store = store.get_ref().clone();
+
+    // Rescan + re-snapshot + reload is a long blocking job: run it on the
+    // blocking pool so the server keeps answering while it works.
+    let work = {
+        let cache = cache.clone();
+        web::block(move || -> std::io::Result<Vec<LibraryMetadata>> {
+            let mut cache = cache.write().unwrap();
+            cache.clear();
+            cache.load_libraries(
+                std::path::Path::new(&library_path),
+                store,
+                snapshot_mode,
+                true,
+            )?;
+            Ok(cache.get_libraries())
+        })
+        .await
+    };
+
+    match work {
+        Ok(Ok(libraries)) => Ok(HttpResponse::Ok().json(ApiResponse {
+            success: true,
+            data: Some(libraries),
+            error: None,
+        })),
+        Ok(Err(e)) => Ok(HttpResponse::InternalServerError().json(ApiResponse {
             success: false,
             data: None::<Vec<LibraryMetadata>>,
-            error: Some("Libraries path not found".to_string()),
-        }))
+            error: Some(format!("Failed to refresh libraries: {}", e)),
+        })),
+        Err(e) => Ok(HttpResponse::InternalServerError().json(ApiResponse {
+            success: false,
+            data: None::<Vec<LibraryMetadata>>,
+            error: Some(format!("Blocking task failed: {}", e)),
+        })),
     }
 }
 
@@ -1506,6 +1725,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/libraries/{id}/books", web::get().to(get_books))
             .route("/libraries/{id}/authors", web::get().to(get_authors))
             .route("/libraries/{id}/tags", web::get().to(get_tags))
+            .route("/libraries/{id}/formats", web::get().to(get_format_stats))
             .route("/libraries/{id}/series", web::get().to(get_series))
             .route("/libraries/{id}/books/{book_id}", web::get().to(get_book))
             .route("/libraries/{id}/books/{book_id}/cover", web::get().to(get_book_cover))
