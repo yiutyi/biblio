@@ -649,6 +649,9 @@ class BiblioApp {
         try {
             this.baseOffset = this.pendingOffset || 0;
             this.pendingOffset = 0;
+            // a fresh shelf always opens with the full chrome visible
+            this._chromeScrollTop = 0;
+            this.setChromeCollapsed(false);
             this.filteredBooks = [];
             this.displayedBooksCount = 0;
             this.totalBooks = 0;
@@ -1429,6 +1432,8 @@ class BiblioApp {
 
         // Add new scroll listener
         this.handleScroll = () => {
+            const scrollTop = booksGrid.scrollTop;
+            this.trackChrome(scrollTop);
             if (this.isLoadingMore) {
                 return;
             }
@@ -1438,10 +1443,10 @@ class BiblioApp {
                 return;
             }
 
-            const scrollTop = booksGrid.scrollTop;
             const scrollHeight = booksGrid.scrollHeight;
             const clientHeight = booksGrid.clientHeight;
 
+            // The viewport is inside the spacer that stands in for trimmed
             // The viewport is inside the spacer that stands in for trimmed
             // cards: there is nothing to look at, so rebuild the top of the list.
             const spacer = booksGrid.querySelector('.grid-spacer');
@@ -1462,6 +1467,26 @@ class BiblioApp {
         };
 
         booksGrid.addEventListener('scroll', this.handleScroll);
+    }
+
+    // Reading posture: scrolling down a shelf hides the app bar, toolbar and
+    // status bar so the grid gets every available pixel; any upward scroll
+    // brings them straight back.
+    trackChrome(scrollTop) {
+        const last = this._chromeScrollTop || 0;
+        const delta = scrollTop - last;
+        this._chromeScrollTop = scrollTop;
+        if (delta > 4 && scrollTop > 120) {
+            this.setChromeCollapsed(true);
+        } else if (delta < -4 || scrollTop < 60) {
+            this.setChromeCollapsed(false);
+        }
+    }
+
+    setChromeCollapsed(collapsed) {
+        if (this._chromeCollapsed === collapsed) return;
+        this._chromeCollapsed = collapsed;
+        document.body.classList.toggle('chrome-collapsed', collapsed);
     }
 
     async selectBook(book, libraryId) {
@@ -2749,6 +2774,7 @@ class BiblioApp {
 
         // Add new scroll listener
         this.handleTableScroll = () => {
+            this.trackChrome(booksTable.scrollTop);
             if (this.isLoadingMore) {
                 return;
             }

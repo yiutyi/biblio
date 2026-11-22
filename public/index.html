@@ -1984,6 +1984,47 @@ body:has(.left-panel.open) #drawerScrim {
         transition-duration: .001ms !important;
     }
 }
+
+/* ============================================================
+   Scroll-away chrome: while reading down a shelf the app bar,
+   toolbar and status bar slide out of the way and hand their
+   pixels back to the grid.
+   ============================================================ */
+.app-bar,
+.bottom-panel {
+    transition: height .24s cubic-bezier(.2, .7, .3, 1), padding .24s, opacity .16s ease, border-color .24s;
+    overflow: hidden;
+}
+
+.books-toolbar {
+    max-height: 160px;
+    overflow: hidden;
+    transition: max-height .24s cubic-bezier(.2, .7, .3, 1), padding .24s, opacity .16s ease, border-color .24s;
+}
+
+body.chrome-collapsed .app-bar {
+    height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    border-bottom-color: transparent;
+}
+
+body.chrome-collapsed .books-toolbar {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    border-bottom-color: transparent;
+}
+
+body.chrome-collapsed .bottom-panel {
+    height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    border-top-color: transparent;
+}
 </style>
 </head>
 
