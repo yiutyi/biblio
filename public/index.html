@@ -1770,6 +1770,53 @@ svg {
     background: rgba(18, 20, 24, .84);
 }
 
+/* Format chip, bottom-right corner of every cover */
+.cover-format {
+    position: absolute;
+    right: 7px;
+    bottom: 7px;
+    z-index: 3;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+    padding: 3px 7px 4px;
+    border-radius: 7px;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: #fffdf6;
+    background: linear-gradient(180deg, rgba(30, 34, 38, .72), rgba(10, 13, 15, .9));
+    border: 1px solid rgba(255, 255, 255, .16);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .14);
+    -webkit-backdrop-filter: blur(5px) saturate(1.1);
+    backdrop-filter: blur(5px) saturate(1.1);
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+    transition: border-color .15s;
+}
+
+.cover-format .fmt-extra {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    opacity: .78;
+}
+
+.book-item:hover .cover-format {
+    border-color: rgba(255, 255, 255, .32);
+}
+
+#detailsCover .cover-format {
+    right: 8px;
+    bottom: 8px;
+    font-size: 11px;
+    padding: 4px 8px 5px;
+}
+
 .row-fav {
     width: 22px;
     height: 22px;
@@ -2453,6 +2500,7 @@ body.chrome-collapsed .bottom-panel {
             <div class="detail-hero">
                 <div id="detailsCover">
                     <img id="coverImage" src="" alt="Book cover">
+                    <span class="cover-format" id="detailFormatBadge" hidden></span>
                 </div>
                 <h2 class="detail-title" id="detailTitle"></h2>
                 <div class="detail-byline" id="detailAuthors"></div>
@@ -2570,7 +2618,7 @@ document.addEventListener('keydown', function (e) {
     }
 });
 </script>
-<script src="app.js?v=43"></script>
+<script src="app.js?v=44"></script>
 </body>
 
 </html>

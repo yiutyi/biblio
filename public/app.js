@@ -1345,6 +1345,14 @@ class BiblioApp {
             }
             coverDiv.appendChild(img);
 
+            const badge = document.createElement('span');
+            badge.className = 'cover-format';
+            const badgeLabel = this.formatBadgeLabel(book);
+            if (badgeLabel) {
+                badge.innerHTML = badgeLabel;
+                coverDiv.appendChild(badge);
+            }
+
             const favBtn = document.createElement('button');
             favBtn.type = 'button';
             favBtn.className = 'fav-btn' + (this.isFavorite(this.currentLibraryId, book.id) ? ' active' : '');
@@ -2270,6 +2278,33 @@ class BiblioApp {
         } else {
             formatsContainer.innerHTML = '<span class="no-formats">No formats available</span>';
         }
+
+        const badge = document.getElementById('detailFormatBadge');
+        if (badge) {
+            const label = this.formatBadgeLabel(book || {});
+            if (label) {
+                badge.innerHTML = label;
+                badge.hidden = false;
+            } else {
+                badge.hidden = true;
+            }
+        }
+    }
+
+    // One chip on the cover corner: the most common reading format first,
+    // anything past the first collapsed into a quiet "+N".
+    formatBadgeLabel(book) {
+        const raw = (book && book.formats) || [];
+        const list = raw.filter(Boolean).map(f => String(f).trim().toUpperCase());
+        if (!list.length) return '';
+        const order = ['EPUB', 'AZW3', 'MOBI', 'PDF', 'TXT', 'DOCX', 'FB2', 'CBZ', 'CBR', 'DJVU', 'HTML', 'RTF', 'ODT', 'LIT', 'AZW'];
+        const rank = f => { const i = order.indexOf(f); return i < 0 ? 99 : i; };
+        const sorted = [...new Set(list)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+        const extra = sorted.length - 1;
+        const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        return extra > 0
+            ? `${esc(sorted[0])}<span class="fmt-extra">+${extra}</span>`
+            : esc(sorted[0]);
     }
 
     updateSort() {
