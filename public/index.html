@@ -2025,6 +2025,17 @@ body.chrome-collapsed .bottom-panel {
     opacity: 0;
     border-top-color: transparent;
 }
+
+/* a cover that is still being fetched dims slightly so a stale picture
+   can never be mistaken for the book you just picked */
+#coverImage {
+    transition: opacity .18s ease, filter .18s ease;
+}
+
+#coverImage.is-loading {
+    opacity: .32;
+    filter: saturate(.92);
+}
 </style>
 </head>
 

@@ -1490,6 +1490,7 @@ class BiblioApp {
     }
 
     async selectBook(book, libraryId) {
+        this._selectSeq = (this._selectSeq || 0) + 1;
         this.selectedBook = book;
         this.selectedBookId = book.id;
         this.selectedBookLibraryId = libraryId || this.currentLibraryId;
@@ -1531,6 +1532,7 @@ class BiblioApp {
     }
 
     async restoreSelectedBook() {
+        const seq = this._selectSeq || 0;
         try {
             // The library is paginated now, so the remembered book may not be in
             // the loaded page: ask the server for that one book instead.
@@ -1547,6 +1549,7 @@ class BiblioApp {
                 }
             }
 
+            if (seq !== (this._selectSeq || 0)) return; // reader already picked another book
             if (book) {
                 // Book is in the current library, restore it
                 this.selectedBook = book;
@@ -1693,18 +1696,40 @@ class BiblioApp {
             this.toggleDetailSection('detailCommentsSection', false);
         }
 
-        // Cover: the detail panel asks for the full-size scan
+        // Cover: show the grid's already-cached thumbnail immediately, then
+        // upgrade to the full-size scan once it arrives. The old book's picture
+        // must never linger, so every callback is fenced by a sequence number.
         const coverImage = document.getElementById('coverImage');
         const generatedCover = () => this.generateTemporaryCover(
             book.title,
             (book.authors || []).join(', ') || 'Unknown'
         );
+        const base = `/api/libraries/${this.currentLibraryId}/books/${book.id}/cover`;
+        const coverSeq = (this._coverSeq = (this._coverSeq || 0) + 1);
+        coverImage.onerror = null;
+        coverImage.onload = null;
+        coverImage.classList.add('is-loading');
+        coverImage.onload = () => {
+            if (coverSeq !== this._coverSeq) return;
+            coverImage.classList.remove('is-loading');
+        };
         if (book.has_cover) {
             coverImage.onerror = () => {
+                if (coverSeq !== this._coverSeq) return;
                 coverImage.onerror = null;
                 coverImage.src = generatedCover();
             };
-            coverImage.src = `/api/libraries/${this.currentLibraryId}/books/${book.id}/cover?size=full`;
+            // thumbnail first: usually already decoded from the card itself
+            coverImage.src = base;
+            const full = new Image();
+            full.decoding = 'async';
+            full.onload = () => {
+                if (coverSeq !== this._coverSeq || !full.naturalWidth) return;
+                coverImage.classList.add('is-loading');
+                coverImage.src = full.src;
+            };
+            full.onerror = () => { };
+            full.src = `${base}?size=full`;
         } else {
             coverImage.src = generatedCover();
         }
