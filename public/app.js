@@ -1503,6 +1503,28 @@ class BiblioApp {
         const last = this._chromeScrollTop || 0;
         const delta = scrollTop - last;
         this._chromeScrollTop = scrollTop;
+
+        // Collapsing resizes the grid, and a resize can clamp scrollTop. That
+        // clamp arrives as a scroll event with a negative delta, which looks
+        // exactly like "the reader scrolled up" - so the bars pop back, the
+        // grid shrinks, and the cycle repeats. While the layout settles we
+        // treat every scroll as bookkeeping only.
+        const now = performance.now();
+        if (this._chromeLockUntil && now < this._chromeLockUntil) {
+            return;
+        }
+
+        // Near the end of a short list the extra height bought by hiding the
+        // bars only clamps the scroll position, so it causes a visible bounce
+        // and buys nothing. Leave the bars where they are down there.
+        if (!this._chromeCollapsed) {
+            const grid = document.getElementById('booksGrid');
+            if (grid) {
+                const remaining = grid.scrollHeight - scrollTop - grid.clientHeight;
+                if (remaining < 160) return;
+            }
+        }
+
         if (delta > 4 && scrollTop > 120) {
             this.setChromeCollapsed(true);
         } else if (delta < -4 || scrollTop < 60) {
@@ -1514,6 +1536,13 @@ class BiblioApp {
         if (this._chromeCollapsed === collapsed) return;
         this._chromeCollapsed = collapsed;
         document.body.classList.toggle('chrome-collapsed', collapsed);
+        // The height change reflows the grid on the next frame; re-baseline the
+        // scroll tracker then so the induced scroll event cannot flip the bars.
+        this._chromeLockUntil = performance.now() + 450;
+        requestAnimationFrame(() => {
+            const grid = document.getElementById('booksGrid');
+            if (grid) this._chromeScrollTop = grid.scrollTop;
+        });
     }
 
     async selectBook(book, libraryId) {
