@@ -35,5 +35,7 @@ users.ids
 *.bak*
 启动-*.cmd
 
+# Generated classification data (large, per-library; rebuilt by script)
+biblio_classification*.db
 *.orig
 

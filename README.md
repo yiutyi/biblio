@@ -446,8 +446,22 @@ The application supports two deployment modes controlled by the `APP_IN_DOCKER` 
 
 ### Configuration Options
 
-**library_path** (string)
-- Path to your Calibre libraries directory
+**library_paths** (list of `{name, path}`) — recommended
+- Explicit, labelled list of Calibre libraries. Add/remove/rename entries in `config.yaml`, then click **Refresh** in the UI (or `POST /api/libraries/refresh`) to apply changes without restarting.
+- `path` may be a library folder (containing `metadata.db`), a folder containing several libraries, or a direct path to `metadata.db`.
+- Relative paths are resolved from the base directory (current working directory, or `/config` in Docker mode).
+- Example:
+  ```yaml
+  library_paths:
+    - name: "Main library"
+      path: "/home/user/calibre"
+    - name: "Addon library"
+      path: "D:\\Books\\addon"
+  ```
+- When this list is empty, `library_path` below is used as a fallback.
+
+**library_path** (string, legacy fallback)
+- Path to your Calibre libraries directory; used only when `library_paths` is empty
 - Relative paths are resolved from the current working directory (standard mode) or `/config` (Docker mode)
 - Examples:
   - Absolute: `/home/username/calibre-libraries`, `/calibre-libraries` (Docker), `C:\Users\username\calibre-libraries` (Windows)

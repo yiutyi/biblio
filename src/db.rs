@@ -1,8 +1,10 @@
 use rusqlite::{Connection, Result as SqlResult, OptionalExtension, OpenFlags};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
+use crate::classification;
+use tracing::warn;
 
 /// Separator used to join multiple values inside a single SQL column.
 const SEP: char = '\u{1f}';
@@ -24,6 +26,14 @@ pub struct Book {
     pub has_cover: bool,
     pub formats: Vec<String>,
     pub sort: Option<String>,
+    /// Category from the library's own `biblio_classification.db`, or (when a
+    /// book was copied in and got a new id) from the unified title+author table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category_second: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category_confidence: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +77,11 @@ pub struct CalibreDb {
     // request that filters used to lowercase 123k titles plus their authors on
     // every keystroke; now it is pure string comparison over prebuilt data.
     index: OnceLock<Arc<BookIndex>>,
+    // Categories are joined onto Book right after the bulk query, so a filter
+    // or a page slice never touches SQLite again.
+    local_category_path: Option<PathBuf>,
+    categories: OnceLock<Option<Arc<classification::LocalCategories>>>,
+    category_stats: OnceLock<Arc<Vec<(String, usize)>>>,
 }
 
 fn split_multi(value: Option<String>) -> Vec<String> {
@@ -82,10 +97,20 @@ fn split_multi(value: Option<String>) -> Vec<String> {
 
 impl CalibreDb {
     pub fn open<P: AsRef<Path>>(path: P) -> SqlResult<Self> {
+        Self::open_with_library(path, None)
+    }
+
+    /// Open a library and remember where its category database lives. Only the
+    /// Calibre `metadata.db` is queried; the category file is a sibling that
+    /// this application maintains itself.
+    pub fn open_with_library<P: AsRef<Path>>(path: P, library_dir: Option<&Path>) -> SqlResult<Self> {
         let conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY,
         )?;
+        let local_category_path = library_dir
+            .map(|dir| dir.join("biblio_classification.db"))
+            .filter(|p| p.exists());
         Ok(CalibreDb {
             conn,
             books: OnceLock::new(),
@@ -95,6 +120,9 @@ impl CalibreDb {
             paths: OnceLock::new(),
             sorts: OnceLock::new(),
             index: OnceLock::new(),
+            local_category_path,
+            categories: OnceLock::new(),
+            category_stats: OnceLock::new(),
         })
     }
 
@@ -151,6 +179,9 @@ impl CalibreDb {
                     publisher: None,
                     rating: None,
                     language: None,
+                    category: None,
+                    category_second: None,
+                    category_confidence: None,
                 })
             })?
             .collect::<SqlResult<Vec<_>>>()?
@@ -291,7 +322,66 @@ impl CalibreDb {
             }
         }
 
+        self.apply_categories(&mut books);
+
         Ok(books)
+    }
+
+    /// Join the library-local categories and, for books that have no row there
+    /// (typically a copy from another library, hence a new id), the shared
+    /// title+author fallback.
+    fn apply_categories(&self, books: &mut [Book]) {
+        let local = self.category_map();
+        let mut fallback_hits = 0usize;
+        for book in books.iter_mut() {
+            if let Some(cat) = local.as_ref().and_then(|m| m.get(&book.id)) {
+                book.category = Some(cat.primary.clone());
+                book.category_second = cat.second.clone();
+                book.category_confidence = cat.confidence;
+                continue;
+            }
+            if let Some(cat) = classification::lookup(&book.title, &book.authors) {
+                fallback_hits += 1;
+                book.category = Some(cat.primary);
+                book.category_second = cat.second;
+                book.category_confidence = cat.confidence;
+            }
+        }
+        if fallback_hits > 0 {
+            warn!(
+                "{} book(s) took their category from the shared title+author table",
+                fallback_hits
+            );
+        }
+    }
+
+    fn category_map(&self) -> Option<Arc<classification::LocalCategories>> {
+        self.categories
+            .get_or_init(|| {
+                let path = self.local_category_path.as_deref()?;
+                classification::load_local(path).map(Arc::new)
+            })
+            .clone()
+    }
+
+    /// Primary-class counts for the sidebar. Computed once from the in-memory
+    /// books; sorted by count so the biggest shelves come first.
+    pub fn category_stats(&self) -> SqlResult<Arc<Vec<(String, usize)>>> {
+        if let Some(cache) = self.category_stats.get() {
+            return Ok(cache.clone());
+        }
+        let books = self.get_all_books()?;
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for book in books.iter() {
+            if let Some(category) = &book.category {
+                *counts.entry(category.clone()).or_insert(0) += 1;
+            }
+        }
+        let mut rows: Vec<(String, usize)> = counts.into_iter().collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let cache = Arc::new(rows);
+        let _ = self.category_stats.set(cache.clone());
+        Ok(cache)
     }
 
     /// Look up a single book from the in-memory cache.

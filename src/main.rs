@@ -7,13 +7,13 @@ mod session;
 mod audit;
 mod rbac;
 mod cache;
+mod classification;
 
 use actix_web::{web, App, HttpServer, middleware};
 use actix_files::Files;
 use library::LibraryCache;
 use cache::CacheStore;
 use std::sync::{Arc, RwLock};
-use std::path::Path;
 use tracing::{warn, info, error};
 use rustls::{ServerConfig, pki_types::CertificateDer};
 use rustls_pemfile::certs;
@@ -46,6 +46,10 @@ async fn main() -> std::io::Result<()> {
         ));
     }
 
+    // Shared, library-independent category table (read only when a book has no
+    // local category row, e.g. after being copied into another library).
+    classification::init(std::path::PathBuf::from(config::classification_db()));
+
     // Load users for authentication
     let users_path = config::users_file_path();
     let users = match auth::load_users(&users_path) {
@@ -73,15 +77,16 @@ async fn main() -> std::io::Result<()> {
     let store = Arc::new(CacheStore::new(&cache_root)?);
     info!("Local cache directory: {:?}", store.root());
 
-    // Load libraries from the configured path
-    let library_path = config::library_path();
+    // Load libraries from the configured paths
+    let entries: Vec<(String, String)> = config::library_entries()
+        .into_iter()
+        .map(|e| (e.name, e.path))
+        .collect();
     let snapshot_mode = config::db_snapshot();
-    let libraries_path = Path::new(&library_path);
-    if libraries_path.exists() {
-        cache.load_libraries(libraries_path, store.clone(), snapshot_mode, false)?;
+    if entries.is_empty() {
+        warn!("No libraries configured; set library_paths in config.yaml");
     } else {
-        warn!("Libraries directory not found at {:?}", libraries_path);
-        warn!("Please configure library_path in config.yaml");
+        cache.load_named_libraries(&entries, store.clone(), snapshot_mode, false)?;
     }
 
     // Warm the per-library search index and sort orders in the background, so

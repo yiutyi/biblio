@@ -3,6 +3,7 @@ class BiblioApp {
     constructor() {
         this.libraries = [];
         this.currentLibraryId = null;
+        this.selectedLibraryIds = new Set();
         this.currentLibrary = null;
         this.allBooks = [];
         // Books currently loaded from the server for the current filter/sort
@@ -19,6 +20,8 @@ class BiblioApp {
         this.selectedTags = new Set();
         this.selectedSeries = new Set();
         this.selectedFormats = new Set();
+        this.selectedCategories = new Set();
+        this.categories = [];
         this.sortMethod = 'recent';
         this.searchTerm = '';
         this.booksPerPage = 100;      // rows/covers appended per render
@@ -91,10 +94,12 @@ class BiblioApp {
     saveAppState() {
         const state = {
             currentLibraryId: this.currentLibraryId,
+            selectedLibraryIds: Array.from(this.selectedLibraryIds),
             selectedAuthors: Array.from(this.selectedAuthors),
             selectedTags: Array.from(this.selectedTags),
             selectedSeries: Array.from(this.selectedSeries),
             selectedFormats: Array.from(this.selectedFormats),
+            selectedCategories: Array.from(this.selectedCategories),
             searchTerm: this.searchTerm,
             sortMethod: this.sortMethod,
             displayedBooksCount: this.displayedBooksCount,
@@ -108,10 +113,17 @@ class BiblioApp {
         const state = this.getCookie('biblioAppState');
         if (state) {
             this.currentLibraryId = state.currentLibraryId;
+            // Old cookies only had currentLibraryId; treat it as the sole selection.
+            this.selectedLibraryIds = new Set(
+                (state.selectedLibraryIds && state.selectedLibraryIds.length)
+                    ? state.selectedLibraryIds
+                    : (state.currentLibraryId ? [state.currentLibraryId] : [])
+            );
             this.selectedAuthors = new Set((state.selectedAuthors || []).map(id => parseInt(id)));
             this.selectedTags = new Set((state.selectedTags || []).map(id => parseInt(id)));
             this.selectedSeries = new Set((state.selectedSeries || []).map(id => parseInt(id)));
             this.selectedFormats = new Set(state.selectedFormats || []);
+            this.selectedCategories = new Set(state.selectedCategories || []);
             this.searchTerm = state.searchTerm || '';
             this.sortMethod = state.sortMethod || 'recent';
             this.displayedBooksCount = state.displayedBooksCount || 0;
@@ -161,9 +173,18 @@ class BiblioApp {
             }
         });
 
+        // Restore category checkboxes
+        this.selectedCategories.forEach(name => {
+            const checkbox = document.getElementById(`cat_${name}`);
+            if (checkbox) {
+                checkbox.checked = true;
+            }
+        });
+
         // Update count displays
         this.updateAuthorCount();
         this.updateFormatCount();
+        this.updateCategoryCount();
         this.updateTagCount();
         this.updateSeriesCount();
         this.renderActiveChips();
@@ -196,11 +217,7 @@ class BiblioApp {
         this.restoreFilterSectionStates();
 
         // If there was a saved library, select it; otherwise select first library
-        if (savedState && savedState.currentLibraryId && this.libraries.some(lib => lib.id === savedState.currentLibraryId)) {
-            await this.selectLibrary(savedState.currentLibraryId);
-        } else if (this.libraries.length > 0) {
-            await this.selectLibrary(this.libraries[0].id);
-        }
+        await this.restoreLibrarySelection(savedState);
 
         // After library is loaded, restore the selected book if it exists
         if (this.selectedBookId && this.selectedBookLibraryId) {
@@ -372,11 +389,7 @@ class BiblioApp {
                 await this.loadLibraries();
                 this.setupEventListeners();
 
-                if (savedState && savedState.currentLibraryId && this.libraries.some(lib => lib.id === savedState.currentLibraryId)) {
-                    await this.selectLibrary(savedState.currentLibraryId);
-                } else if (this.libraries.length > 0) {
-                    await this.selectLibrary(this.libraries[0].id);
-                }
+                await this.restoreLibrarySelection(savedState);
             } else {
                 errorDiv.textContent = data.error || 'Login failed';
                 errorDiv.style.display = 'block';
@@ -484,10 +497,10 @@ class BiblioApp {
         this.libraries.forEach(lib => {
             const item = document.createElement('div');
             item.className = 'filter-item';
-            const checked = this.currentLibraryId === lib.id ? 'checked' : '';
+            const checked = this.selectedLibraryIds.has(lib.id) ? 'checked' : '';
             item.innerHTML = `
-                <input type="radio" name="library" id="lib_${lib.id}" value="${lib.id}" ${checked}
-                       onchange="app.selectLibrary('${lib.id}')">
+                <input type="checkbox" name="library" id="lib_${lib.id}" value="${lib.id}" ${checked}
+                       onchange="app.toggleLibrary('${lib.id}')">
                 <label for="lib_${lib.id}">
                     <span class="fx-name">${this.escapeHtml(lib.name)}</span>
                     <span class="fx-count">${this.formatNumber(lib.book_count || 0)}</span>
@@ -497,87 +510,118 @@ class BiblioApp {
         });
     }
 
+    // Restore from cookie. Old cookies stored only currentLibraryId.
+    async restoreLibrarySelection(savedState) {
+        let ids = (savedState && savedState.selectedLibraryIds)
+            ? savedState.selectedLibraryIds.filter(id => this.libraries.some(l => l.id === id))
+            : [];
+        if (!ids.length && savedState && savedState.currentLibraryId
+            && this.libraries.some(l => l.id === savedState.currentLibraryId)) {
+            ids = [savedState.currentLibraryId];
+        }
+        if (!ids.length && this.libraries.length) {
+            ids = [this.libraries[0].id];
+        }
+        if (!ids.length) return;
+
+        await this.setLibraries(ids);
+
+        // Multi-library facet ids are derived from sorted names, so they are
+        // stable across reloads with the same library set. Restore filters for
+        // any selection, then re-persist because setLibraries() saved a cleaned
+        // state before this block ran.
+        if (savedState) {
+            this.selectedAuthors = new Set((savedState.selectedAuthors || []).map(id => parseInt(id)));
+            this.selectedTags = new Set((savedState.selectedTags || []).map(id => parseInt(id)));
+            this.selectedSeries = new Set((savedState.selectedSeries || []).map(id => parseInt(id)));
+            this.selectedFormats = new Set(savedState.selectedFormats || []);
+            this.selectedCategories = new Set(savedState.selectedCategories || []);
+            this.searchTerm = savedState.searchTerm || '';
+            this.sortMethod = savedState.sortMethod || 'recent';
+            this.restoreFilterUI();
+            if (this.searchTerm || this.selectedAuthors.size || this.selectedTags.size ||
+                this.selectedSeries.size || this.selectedFormats.size ||
+                this.selectedCategories.size ||
+                this.sortMethod !== 'recent') {
+                await this.applyFilters();
+            }
+            this.saveAppState();
+        }
+    }
+
+    async toggleLibrary(libraryId) {
+        const next = new Set(this.selectedLibraryIds);
+        if (next.has(libraryId)) {
+            if (next.size === 1) {
+                const cb = document.getElementById(`lib_${libraryId}`);
+                if (cb) cb.checked = true;
+                return;
+            }
+            next.delete(libraryId);
+        } else {
+            next.add(libraryId);
+        }
+        await this.setLibraries(Array.from(next));
+    }
+
     async selectLibrary(libraryId) {
+        await this.setLibraries([libraryId]);
+    }
+
+    async setLibraries(libraryIds) {
+        const ids = Array.from(new Set(libraryIds))
+            .filter(id => this.libraries.some(l => l.id === id));
+        if (!ids.length) return;
         try {
-            this.currentLibraryId = libraryId;
+            this.selectedLibraryIds = new Set(ids);
+            this.currentLibraryId = ids[0];
+            this.currentLibrary = this.libraries.find(l => l.id === ids[0]) || null;
             this.selectedBook = null;
+            this.selectedBookId = null;
+            this.selectedBookLibraryId = null;
             this.displayedBooksCount = 0;
 
-            // Check if we're switching to a different library
-            const isSwitchingLibrary = this.currentLibrary && this.currentLibrary.id !== libraryId;
+            // Facet ids are library-local; changing the selected set
+            // invalidates any active author/tag/series filter.
+            this.selectedAuthors.clear();
+            this.selectedTags.clear();
+            this.selectedSeries.clear();
+            this.selectedFormats.clear();
+            this.selectedCategories.clear();
+            this.searchTerm = '';
+            this.sortMethod = 'recent';
 
-            // If switching libraries, clear all filters
-            if (isSwitchingLibrary) {
-                this.selectedAuthors.clear();
-                this.selectedTags.clear();
-                this.selectedSeries.clear();
-                this.selectedFormats.clear();
-                this.searchTerm = '';
-                this.sortMethod = 'recent';
-            }
-
-            // Update radio button
-            document.querySelectorAll('input[name="library"]').forEach(radio => {
-                radio.checked = radio.value === libraryId;
+            document.querySelectorAll('input[name="library"]').forEach(cb => {
+                cb.checked = this.selectedLibraryIds.has(cb.value);
             });
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) searchInput.value = '';
+            const sortSelect = document.getElementById('sortSelect');
+            if (sortSelect) sortSelect.value = 'recent';
 
-            const lib = this.libraries.find(l => l.id === libraryId);
-            if (lib) {
-                this.currentLibrary = lib;
-                document.getElementById('statusLibrary').textContent = lib.name;
-                const brandLibrary = document.getElementById('brandLibrary');
-                if (brandLibrary) brandLibrary.textContent = lib.name;
-                const totalEl = document.getElementById('statusBooks');
-                if (totalEl) totalEl.textContent = this.formatNumber(lib.book_count || 0);
-            }
+            const chosen = this.libraries.filter(l => this.selectedLibraryIds.has(l.id));
+            const total = chosen.reduce((n, l) => n + (l.book_count || 0), 0);
+            const label = chosen.length === 1 ? chosen[0].name : `${chosen.length} 个书库`;
+            const statusLibrary = document.getElementById('statusLibrary');
+            if (statusLibrary) statusLibrary.textContent = label;
+            const brandLibrary = document.getElementById('brandLibrary');
+            if (brandLibrary) brandLibrary.textContent = label;
+            const totalEl = document.getElementById('statusBooks');
+            if (totalEl) totalEl.textContent = this.formatNumber(total);
 
             this.updateStatus('Loading books...');
             await this.loadBooks();
             await this.loadFilters();
-
-            // If switching libraries, clear UI; otherwise restore saved state
-            if (isSwitchingLibrary) {
-                const searchInput = document.getElementById('searchInput');
-                if (searchInput) {
-                    searchInput.value = '';
-                }
-
-                const sortSelect = document.getElementById('sortSelect');
-                if (sortSelect) {
-                    sortSelect.value = 'recent';
-                }
-                // Update filter count badges to show 0
-                this.updateAuthorCount();
-                this.updateTagCount();
-                this.updateSeriesCount();
-                this.updateFormatCount();
-                // Save the new library ID with cleared filters to cookie
-                this.saveAppState();
-            } else {
-                // On initial load, restore saved state if it exists for this library
-                const savedState = this.getCookie('biblioAppState');
-                if (savedState && savedState.currentLibraryId === libraryId) {
-                    this.selectedAuthors = new Set((savedState.selectedAuthors || []).map(id => parseInt(id)));
-                    this.selectedTags = new Set((savedState.selectedTags || []).map(id => parseInt(id)));
-                    this.selectedSeries = new Set((savedState.selectedSeries || []).map(id => parseInt(id)));
-                    this.selectedFormats = new Set(savedState.selectedFormats || []);
-                    this.searchTerm = savedState.searchTerm || '';
-                    this.sortMethod = savedState.sortMethod || 'recent';
-                    this.restoreFilterUI();
-                    // loadBooks() above already fetched an unfiltered first page;
-                    // only refetch when the restored state actually filters.
-                    if (this.searchTerm || this.selectedAuthors.size || this.selectedTags.size ||
-                        this.selectedSeries.size || this.selectedFormats.size ||
-                        this.sortMethod !== 'recent') {
-                        this.applyFilters();
-                    }
-                }
-            }
-
+            this.updateAuthorCount();
+            this.updateTagCount();
+            this.updateSeriesCount();
+            this.updateFormatCount();
+            this.updateCategoryCount();
+            this.saveAppState();
             this.updateStatus('Ready');
         } catch (error) {
-            console.error('Error selecting library:', error);
-            this.updateStatus('Error loading library');
+            console.error('Error selecting libraries:', error);
+            this.updateStatus('Error loading libraries');
         }
     }
 
@@ -613,6 +657,9 @@ class BiblioApp {
         if (this.selectedFormats.size) {
             params.set('formats', Array.from(this.selectedFormats).join('|'));
         }
+        if (this.selectedCategories.size) {
+            params.set('categories', Array.from(this.selectedCategories).join('|'));
+        }
         return params.toString();
     }
 
@@ -620,7 +667,10 @@ class BiblioApp {
         // `baseOffset` lets the random-shelf jump land somewhere in the middle
         // of the library while keeping infinite scroll arithmetic simple.
         const absolute = (this.baseOffset || 0) + offset;
-        const url = `/api/libraries/${this.currentLibraryId}/books?${this.booksQuery(absolute)}`;
+        const libs = this.selectedLibraryIds.size
+            ? Array.from(this.selectedLibraryIds).join('|')
+            : this.currentLibraryId;
+        const url = `/api/books?libs=${encodeURIComponent(libs || '')}&${this.booksQuery(absolute)}`;
         const response = await fetch(url);
         return await response.json();
     }
@@ -630,7 +680,10 @@ class BiblioApp {
         if (!this.currentLibraryId) return;
         try {
             this.updateStatus('Picking a random shelf…');
-            const response = await fetch(`/api/libraries/${this.currentLibraryId}/books?${this.booksQuery(0, 1)}`);
+            const libs = this.selectedLibraryIds.size
+                ? Array.from(this.selectedLibraryIds).join('|')
+                : this.currentLibraryId;
+            const response = await fetch(`/api/books?libs=${encodeURIComponent(libs || '')}&${this.booksQuery(0, 1)}`);
             const probe = await response.json();
             const total = probe.total || 0;
             if (!total) return;
@@ -667,7 +720,8 @@ class BiblioApp {
                 this.filteredBooks = data.data || [];
                 this.totalBooks = data.total || 0;
                 const isFiltered = !!(this.searchTerm || this.selectedAuthors.size ||
-                    this.selectedTags.size || this.selectedSeries.size || this.selectedFormats.size);
+                    this.selectedTags.size || this.selectedSeries.size || this.selectedFormats.size ||
+                    this.selectedCategories.size);
                 const filteredEl = document.getElementById('statusFiltered');
                 if (filteredEl) filteredEl.textContent = this.formatNumber(this.totalBooks);
                 const matchesItem = document.getElementById('matchesItem');
@@ -707,13 +761,43 @@ class BiblioApp {
         return false;
     }
 
+    // Facets are served per library. For a multi-library selection, fetch each
+    // one, merge by name and re-key with local ids so the existing checkbox
+    // logic (which uses numeric ids) still works.
+    async fetchFacets(kind, nameKey = 'name', countKey = 'book_count') {
+        const ids = this.selectedLibraryIds.size
+            ? Array.from(this.selectedLibraryIds)
+            : (this.currentLibraryId ? [this.currentLibraryId] : []);
+        const responses = await Promise.all(
+            ids.map(id => fetch(`/api/libraries/${id}/${kind}`).then(r => r.json()))
+        );
+        const rows = responses.flatMap(d => (d.success && d.data) ? d.data : []);
+        if (ids.length <= 1) return rows;
+
+        const byName = new Map();
+        for (const row of rows) {
+            const key = String(row[nameKey] || '').toLowerCase();
+            if (!key) continue;
+            const hit = byName.get(key);
+            if (hit) {
+                hit[countKey] = (hit[countKey] || 0) + (row[countKey] || 0);
+            } else {
+                byName.set(key, { ...row });
+            }
+        }
+        return Array.from(byName.values())
+            .sort((a, b) => String(a[nameKey] || '').localeCompare(String(b[nameKey] || '')))
+            .map((row, i) => ({ ...row, id: i + 1 }));
+    }
+
     async loadFilters() {
         try {
             await Promise.all([
                 this.loadAuthors(),
                 this.loadTags(),
                 this.loadSeries(),
-                this.loadFormats()
+                this.loadFormats(),
+                this.loadCategories()
             ]);
         } catch (error) {
             console.error('Error loading filters:', error);
@@ -722,12 +806,7 @@ class BiblioApp {
 
     async loadAuthors() {
         try {
-            const response = await fetch(`/api/libraries/${this.currentLibraryId}/authors`);
-            const data = await response.json();
-
-            if (data.success) {
-                this.renderAuthors(data.data || []);
-            }
+            this.renderAuthors(await this.fetchFacets('authors'));
         } catch (error) {
             console.error('Error loading authors:', error);
         }
@@ -858,12 +937,7 @@ class BiblioApp {
 
     async loadTags() {
         try {
-            const response = await fetch(`/api/libraries/${this.currentLibraryId}/tags`);
-            const data = await response.json();
-
-            if (data.success) {
-                this.renderTags(data.data || []);
-            }
+            this.renderTags(await this.fetchFacets('tags'));
         } catch (error) {
             console.error('Error loading tags:', error);
         }
@@ -962,12 +1036,7 @@ class BiblioApp {
 
     async loadSeries() {
         try {
-            const response = await fetch(`/api/libraries/${this.currentLibraryId}/series`);
-            const data = await response.json();
-
-            if (data.success) {
-                this.renderSeries(data.data || []);
-            }
+            this.renderSeries(await this.fetchFacets('series'));
         } catch (error) {
             console.error('Error loading series:', error);
         }
@@ -1067,20 +1136,13 @@ class BiblioApp {
 
     async loadFormats() {
         try {
-            // The library is no longer loaded into the browser, so the server
-            // reports how many books carry each format.
-            const response = await fetch(`/api/libraries/${this.currentLibraryId}/formats`);
-            const data = await response.json();
-
+            const rows = await this.fetchFacets('formats', 'format', 'count');
             this.formatsCount = {};
             this.formats = [];
-            if (data.success) {
-                (data.data || []).forEach(row => {
-                    this.formatsCount[row.format] = row.count;
-                    this.formats.push(row.format);
-                });
-            }
-
+            rows.forEach(row => {
+                this.formatsCount[row.format] = row.count;
+                this.formats.push(row.format);
+            });
             this.renderFormats(this.formats, this.formatsCount);
         } catch (error) {
             console.error('Error loading formats:', error);
@@ -1091,6 +1153,45 @@ class BiblioApp {
         this.formats = formats || [];
         this.formatsCount = formatsCount || {};
         this.renderFilterSection('formats');
+    }
+
+    async loadCategories() {
+        try {
+            const rows = await this.fetchFacets('categories', 'name', 'count');
+            this.categories = rows.map(row => ({
+                id: row.name,
+                name: row.name,
+                book_count: row.count || 0
+            })).sort((a, b) => (b.book_count - a.book_count) || a.name.localeCompare(b.name));
+            this.renderCategories();
+        } catch (error) {
+            console.error('Error loading categories:', error);
+        }
+    }
+
+    renderCategories() {
+        this.renderFilterSection('categories');
+    }
+
+    toggleCategoryFilter(name) {
+        if (!name) return;
+        if (this.selectedCategories.has(name)) {
+            this.selectedCategories.delete(name);
+        } else {
+            this.selectedCategories.add(name);
+        }
+        this.saveAppState();
+        this.updateCategoryCount();
+        this.renderCategories();
+        this.applyFilters();
+    }
+
+    clearCategories() {
+        this.selectedCategories.clear();
+        this.saveAppState();
+        this.renderCategories();
+        this.updateCategoryCount();
+        this.applyFilters();
     }
 
     toggleFormatFilter(format) {
@@ -1183,6 +1284,13 @@ class BiblioApp {
         const span = document.getElementById('formatCount');
         if (span) {
             span.textContent = this.selectedFormats.size > 0 ? String(this.selectedFormats.size) : '';
+        }
+    }
+
+    updateCategoryCount() {
+        const span = document.getElementById('categoryCount');
+        if (span) {
+            span.textContent = this.selectedCategories.size > 0 ? String(this.selectedCategories.size) : '';
         }
     }
 
@@ -1303,10 +1411,13 @@ class BiblioApp {
         const booksToDisplay = this.filteredBooks.slice(this.displayedBooksCount, endIndex);
 
         booksToDisplay.forEach(book => {
+            const bookLib = book.library_id || this.currentLibraryId;
             const bookItem = document.createElement('div');
-            bookItem.className = 'book-item' + (this.selectedBook && this.selectedBook.id === book.id ? ' selected' : '');
+            bookItem.className = 'book-item' + (this.selectedBook && this.selectedBook.id === book.id
+                && this.selectedBookLibraryId === bookLib ? ' selected' : '');
             bookItem.dataset.bookId = book.id;
-            bookItem.onclick = () => this.selectBook(book);
+            bookItem.dataset.libraryId = bookLib;
+            bookItem.onclick = () => this.selectBook(book, bookLib);
 
             const coverDiv = document.createElement('div');
             coverDiv.className = 'book-cover';
@@ -1318,7 +1429,7 @@ class BiblioApp {
             img.decoding = 'async';
             img.alt = book.title || 'Cover';
             const firstAuthor = (book.authors && book.authors.length > 0) ? book.authors[0] : 'Unknown';
-            const coverUrl = `/api/libraries/${this.currentLibraryId}/books/${book.id}/cover`;
+            const coverUrl = `/api/libraries/${bookLib}/books/${book.id}/cover`;
             const fallbackCover = () => {
                 img.onerror = null;
                 img.src = this.generateTemporaryCover(book.title, firstAuthor);
@@ -1345,6 +1456,13 @@ class BiblioApp {
             }
             coverDiv.appendChild(img);
 
+            if (book.category) {
+                const catBadge = document.createElement('span');
+                catBadge.className = 'cover-category';
+                catBadge.textContent = book.category;
+                coverDiv.appendChild(catBadge);
+            }
+
             const badge = document.createElement('span');
             badge.className = 'cover-format';
             const badgeLabel = this.formatBadgeLabel(book);
@@ -1355,8 +1473,8 @@ class BiblioApp {
 
             const favBtn = document.createElement('button');
             favBtn.type = 'button';
-            favBtn.className = 'fav-btn' + (this.isFavorite(this.currentLibraryId, book.id) ? ' active' : '');
-            favBtn.dataset.favKey = this.favKey(this.currentLibraryId, book.id);
+            favBtn.className = 'fav-btn' + (this.isFavorite(bookLib, book.id) ? ' active' : '');
+            favBtn.dataset.favKey = this.favKey(bookLib, book.id);
             favBtn.title = 'Favorite';
             favBtn.setAttribute('aria-label', 'Toggle favorite');
             favBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1366,7 +1484,7 @@ class BiblioApp {
             favBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.toggleFavorite({
-                    lib: this.currentLibraryId,
+                    lib: bookLib,
                     id: book.id,
                     title: book.title,
                     authors: book.authors || []
@@ -1632,10 +1750,12 @@ class BiblioApp {
         try {
             // The library is paginated now, so the remembered book may not be in
             // the loaded page: ask the server for that one book instead.
-            let book = this.filteredBooks.find(b => b.id === this.selectedBookId);
+            let book = this.filteredBooks.find(b => b.id === this.selectedBookId
+                && (b.library_id || this.currentLibraryId) === this.selectedBookLibraryId);
             if (!book && this.selectedBookId) {
                 try {
-                    const response = await fetch(`/api/libraries/${this.currentLibraryId}/books/${this.selectedBookId}`);
+                    const libId = this.selectedBookLibraryId || this.currentLibraryId;
+                    const response = await fetch(`/api/libraries/${libId}/books/${this.selectedBookId}`);
                     if (response.ok) {
                         const data = await response.json();
                         if (data.success && data.data) book = data.data;
@@ -1669,7 +1789,7 @@ class BiblioApp {
                     const firstBook = this.filteredBooks[0];
                     this.selectedBook = firstBook;
                     this.selectedBookId = firstBook.id;
-                    this.selectedBookLibraryId = this.currentLibraryId;
+                    this.selectedBookLibraryId = firstBook.library_id || this.currentLibraryId;
                     this.saveAppState();
                     this.renderBookDetails(firstBook);
 
@@ -1746,6 +1866,40 @@ class BiblioApp {
         document.getElementById('detailSeries').textContent = seriesText;
         this.toggleDetailSection('detailSeriesSection', seriesText !== '');
 
+        // Category: primary class, optional sub-class and confidence. Clicking
+        // the chip filters the shelf by that class.
+        const catEl = document.getElementById('detailCategory');
+        if (catEl) {
+            catEl.innerHTML = '';
+            if (book.category) {
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'tag-chip category-chip';
+                chip.textContent = book.category;
+                chip.title = 'Filter by this category';
+                chip.addEventListener('click', () => this.toggleCategoryFilter(book.category));
+                catEl.appendChild(chip);
+                if (book.category_second) {
+                    const sub = document.createElement('span');
+                    sub.className = 'category-sub';
+                    sub.textContent = book.category_second;
+                    catEl.appendChild(sub);
+                }
+                if (book.category_confidence) {
+                    const pct = book.category_confidence > 1
+                        ? Math.round(book.category_confidence)
+                        : Math.round(book.category_confidence * 100);
+                    const conf = document.createElement('span');
+                    conf.className = 'category-conf';
+                    conf.textContent = `${pct}%`;
+                    catEl.appendChild(conf);
+                }
+            } else {
+                catEl.textContent = '—';
+            }
+        }
+        this.toggleDetailSection('detailCategorySection', !!book.category);
+
         // Tags as clickable chips
         const tagsEl = document.getElementById('detailTags');
         if (tagsEl) {
@@ -1800,7 +1954,8 @@ class BiblioApp {
             book.title,
             (book.authors || []).join(', ') || 'Unknown'
         );
-        const base = `/api/libraries/${this.currentLibraryId}/books/${book.id}/cover`;
+        const bookLib = book.library_id || this.selectedBookLibraryId || this.currentLibraryId;
+        const base = `/api/libraries/${bookLib}/books/${book.id}/cover`;
         const coverSeq = (this._coverSeq = (this._coverSeq || 0) + 1);
         coverImage.onerror = null;
         coverImage.onload = null;
@@ -1811,7 +1966,7 @@ class BiblioApp {
             // If the grid tile for this book had given up and painted a
             // generated plate, repair it now that the server answered.
             if (!coverImage.src.startsWith('data:')) {
-                const tile = document.querySelector(`.book-item[data-book-id="${book.id}"] img`);
+                const tile = document.querySelector(`.book-item[data-book-id="${book.id}"][data-library-id="${bookLib}"] img`);
                 if (tile && tile.src.startsWith('data:')) {
                     tile.dataset.retried = '1';
                     tile.src = coverImage.src.split('?')[0];
@@ -1874,7 +2029,7 @@ class BiblioApp {
     }
 
     saveFilterSectionStates() {
-        const sections = ['librariesList', 'authorsList', 'seriesList', 'tagsList', 'formatsList'];
+        const sections = ['librariesList', 'authorsList', 'seriesList', 'tagsList', 'formatsList', 'categoriesList'];
         const states = {};
         sections.forEach(sectionId => {
             const content = document.getElementById(sectionId);
@@ -2295,8 +2450,9 @@ class BiblioApp {
 
         const book = this.selectedBook;
         if (book && book.formats && book.formats.length > 0) {
+            const bookLib = book.library_id || this.selectedBookLibraryId || this.currentLibraryId;
             formatsContainer.innerHTML = book.formats.map(format => `
-                <a href="/api/libraries/${this.currentLibraryId}/books/${bookId}/formats/${format}"
+                <a href="/api/libraries/${bookLib}/books/${bookId}/formats/${format}"
                    target="_blank" rel="noopener" class="format-button" title="Download ${format.toUpperCase()}">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2872,16 +3028,17 @@ class BiblioApp {
 
         // Add new rows to table
         booksToDisplay.forEach(book => {
+            const bookLib = book.library_id || this.currentLibraryId;
             const row = document.createElement('tr');
             row.dataset.bookId = book.id;
-            row.dataset.libraryId = this.currentLibraryId;
-            if (this.selectedBookId === book.id && this.selectedBookLibraryId === this.currentLibraryId) {
+            row.dataset.libraryId = bookLib;
+            if (this.selectedBookId === book.id && this.selectedBookLibraryId === bookLib) {
                 row.classList.add('selected');
             }
 
-            const favActive = this.isFavorite(this.currentLibraryId, book.id);
+            const favActive = this.isFavorite(bookLib, book.id);
             row.innerHTML = `
-                <td><button class="row-fav${favActive ? ' active' : ''}" data-fav-key="${this.favKey(this.currentLibraryId, book.id)}" title="Favorite" aria-label="Toggle favorite"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.4c-1-.7-8.5-5.4-10.2-9.6C.7 7.4 2.9 4 6.3 4c2 0 3.7 1 5.7 3 2-2 3.7-3 5.7-3 3.4 0 5.6 3.4 4.5 6.8-1.7 4.2-9.2 8.9-10.2 9.6Z"/></svg></button>${this.escapeHtml(book.title || '')}</td>
+                <td><button class="row-fav${favActive ? ' active' : ''}" data-fav-key="${this.favKey(bookLib, book.id)}" title="Favorite" aria-label="Toggle favorite"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.4c-1-.7-8.5-5.4-10.2-9.6C.7 7.4 2.9 4 6.3 4c2 0 3.7 1 5.7 3 2-2 3.7-3 5.7-3 3.4 0 5.6 3.4 4.5 6.8-1.7 4.2-9.2 8.9-10.2 9.6Z"/></svg></button>${this.escapeHtml(book.title || '')}${book.category ? `<span class="table-cat">${this.escapeHtml(book.category)}</span>` : ''}</td>
                 <td>${this.escapeHtml((book.authors || []).map(author => this.formatAuthorName(author)).join(', '))}</td>
                 <td>${this.escapeHtml(book.series && book.series_index ? `${book.series} #${book.series_index}` : (book.series || ''))}</td>
                 <td>${this.escapeHtml((book.publisher || ''))}</td>
@@ -2892,7 +3049,7 @@ class BiblioApp {
             row.querySelector('.row-fav').addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.toggleFavorite({
-                    lib: this.currentLibraryId,
+                    lib: bookLib,
                     id: book.id,
                     title: book.title,
                     authors: book.authors || []
@@ -2900,7 +3057,7 @@ class BiblioApp {
             });
 
             row.addEventListener('click', (e) => {
-                this.selectBook(book, this.currentLibraryId);
+                this.selectBook(book, bookLib);
             });
 
             tbody.appendChild(row);
@@ -3114,11 +3271,7 @@ class BiblioApp {
                 this.adjustPanelsForViewport();
 
                 // Restore previous selection if the library still exists
-                if (savedState && savedState.currentLibraryId && this.libraries.some(lib => lib.id === savedState.currentLibraryId)) {
-                    await this.selectLibrary(savedState.currentLibraryId);
-                } else if (this.libraries.length > 0) {
-                    await this.selectLibrary(this.libraries[0].id);
-                }
+                await this.restoreLibrarySelection(savedState);
                 this.updateStatus('Libraries refreshed successfully');
             } else {
                 console.error('Failed to refresh libraries:', data.error);
@@ -3221,6 +3374,23 @@ class BiblioApp {
                 count: (f) => (this.formatsCount || {})[f.name] || 0,
                 group: false,
                 empty: 'No formats found'
+            },
+            categories: {
+                bodyId: 'categoriesBody',
+                searchId: 'categoriesSearch',
+                totalId: 'categoryTotal',
+                prefix: 'cat',
+                toggle: 'toggleCategoryFilter',
+                // Category names are the keys themselves (str like formats).
+                isFormat: true,
+                data: () => (this.categories || []),
+                selected: () => this.selectedCategories,
+                label: (c) => c.name || '',
+                key: (c) => c.name || '',
+                count: (c) => c.book_count || 0,
+                sort: (a, b) => (b.book_count - a.book_count) || a.name.localeCompare(b.name),
+                group: false,
+                empty: 'No categories found'
             }
         };
     }
@@ -3242,10 +3412,13 @@ class BiblioApp {
         const q = searchEl && searchEl.value ? searchEl.value.trim().toLowerCase() : '';
 
         // Sort on a precomputed key: plain string compare is an order of
-        // magnitude cheaper than 68k localeCompare calls.
-        const keyed = data.map(it => [String(cfg.key(it)), it]);
-        keyed.sort((a, b) => (a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0)));
-        const sorted = keyed.map(pair => pair[1]);
+        // magnitude cheaper than 68k localeCompare calls. Sections that care
+        // about magnitude (categories) supply their own comparator.
+        const sorted = cfg.sort
+            ? [...data].sort(cfg.sort)
+            : data.map(it => [String(cfg.key(it)), it])
+                .sort((a, b) => (a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0)))
+                .map(pair => pair[1]);
 
         body.innerHTML = '';
         if (sorted.length === 0) {
@@ -3499,7 +3672,9 @@ class BiblioApp {
             const res = await fetch(`/api/libraries/${libId}/books/${bookId}`);
             const data = await res.json();
             if (!data || !data.success || !data.data) return;
-            if (libId !== this.currentLibraryId) await this.selectLibrary(libId);
+            if (!this.selectedLibraryIds.has(libId)) {
+                await this.setLibraries([...this.selectedLibraryIds, libId]);
+            }
             this.selectBook(data.data, libId);
         } catch (e) {
             console.warn('Could not open favorite:', e);
@@ -3517,12 +3692,14 @@ class BiblioApp {
         this.selectedTags.clear();
         this.selectedSeries.clear();
         this.selectedFormats.clear();
+        this.selectedCategories.clear();
 
         this.updateAuthorCount();
         this.updateTagCount();
         this.updateSeriesCount();
         this.updateFormatCount();
-        ['authors', 'series', 'tags', 'formats'].forEach(kind => this.renderFilterSection(kind));
+        this.updateCategoryCount();
+        ['authors', 'series', 'tags', 'formats', 'categories'].forEach(kind => this.renderFilterSection(kind));
 
         this.displayedBooksCount = 0;
         this.saveAppState();
@@ -3573,6 +3750,9 @@ class BiblioApp {
             this.selectedFormats.forEach(f => {
                 addChip('format', String(f).toUpperCase(), () => this.toggleFormatFilter(f));
             });
+            this.selectedCategories.forEach(name => {
+                addChip('category', name, () => this.toggleCategoryFilter(name));
+            });
 
             if (!box.children.length) {
                 box.innerHTML = '';
@@ -3590,7 +3770,8 @@ class BiblioApp {
         if (countEl) {
             const total = this.totalBooks || 0;
             const filtered = !!(this.searchTerm || this.selectedAuthors.size ||
-                this.selectedTags.size || this.selectedSeries.size || this.selectedFormats.size);
+                this.selectedTags.size || this.selectedSeries.size || this.selectedFormats.size ||
+                this.selectedCategories.size);
             countEl.innerHTML = `<strong>${this.formatNumber(total)}</strong> ${filtered ? (total === 1 ? 'match' : 'matches') : 'books'}`;
         }
     }

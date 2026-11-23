@@ -37,6 +37,17 @@
 #   Relative to /config: "calibre-libraries" (if /config/../calibre-libraries maps correctly)
 library_path: "/path/to/your/calibre-libraries"
 
+# Explicit list of Calibre libraries (recommended).
+# Add/remove/rename entries here, then click Refresh in the UI to apply without
+# a restart. If this list is empty, `library_path` above is used as a fallback.
+# Path forms: library folder (with metadata.db), folder containing libraries,
+# or a direct path to metadata.db.
+library_paths:
+  - name: "My Library"
+    path: "/path/to/your/calibre-libraries"
+  # - name: "Second Library"
+  #   path: "D:\\Books\\second-library"
+
 # IP and port for the Biblio server to bind to
 # Format: "IP:PORT"
 # Examples:
@@ -97,3 +108,17 @@ certificate_path: "certs/cert.pem"
 #   Relative: "certs/key.pem"
 #   Absolute: "/config/certs/key.pem" (Docker) or "/etc/biblio/key.pem" (Linux)
 private_key_path: "certs/key.pem"
+
+# Local cache directory (DB snapshots + cover thumbnails), relative to base dir
+cache_dir: "cache"
+
+# Longest side of generated cover thumbnails, in pixels
+thumbnail_size: 200
+
+# Snapshot Calibre DB locally: "auto", "always", or "never"
+db_snapshot: "auto"
+
+# Library-independent category table (normalized title + author). Used when a
+# book has no row in the owning library's biblio_classification.db, e.g. after
+# it was copied into another library and received a new Calibre id.
+classification_db: "biblio_classification_unified.db"

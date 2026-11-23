@@ -1813,6 +1813,87 @@ svg {
     padding: 4px 8px 5px;
 }
 
+/* Category chip, top-left corner of every cover */
+.cover-category {
+    position: absolute;
+    left: 7px;
+    top: 7px;
+    z-index: 3;
+    max-width: calc(100% - 44px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 3px 7px 4px;
+    border-radius: 7px;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.15;
+    color: #fffdf6;
+    background: linear-gradient(180deg, rgba(120, 62, 28, .82), rgba(62, 28, 12, .9));
+    border: 1px solid rgba(255, 232, 197, .28);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .3), inset 0 1px 0 rgba(255, 255, 255, .18);
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.book-item:hover .cover-category {
+    border-color: rgba(255, 232, 197, .5);
+}
+
+#detailsCover .cover-category {
+    left: 8px;
+    top: 8px;
+    font-size: 12px;
+    padding: 4px 9px 5px;
+}
+
+.category-chip {
+    background: rgba(120, 62, 28, .12);
+    border-color: rgba(120, 62, 28, .3);
+}
+
+[data-theme="dark"] .category-chip {
+    background: rgba(255, 196, 128, .12);
+    border-color: rgba(255, 196, 128, .3);
+    color: #ffd8a8;
+}
+
+.category-sub {
+    margin-left: 8px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.category-conf {
+    margin-left: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    opacity: .85;
+}
+
+/* Category shown after the title in table view (no extra column, so stored
+   column widths and visibility preferences keep working). */
+.table-cat {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 6px 2px;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 600;
+    vertical-align: 1px;
+    color: #8a4a1e;
+    background: rgba(138, 74, 30, .1);
+    border: 1px solid rgba(138, 74, 30, .18);
+    white-space: nowrap;
+}
+
+[data-theme="dark"] .table-cat {
+    color: #ffd8a8;
+    background: rgba(255, 196, 128, .1);
+    border-color: rgba(255, 196, 128, .2);
+}
+
 .row-fav {
     width: 22px;
     height: 22px;
@@ -2346,6 +2427,34 @@ body.chrome-collapsed .bottom-panel {
                 </div>
             </div>
         </section>
+
+        <section class="fsec">
+            <div class="filter-section-header" onclick="app.toggleFilterSection('categoriesList')">
+                <span class="fsec-title">Categories</span>
+                <span class="fsec-total" id="categoryTotal"></span>
+                <span class="fsec-badge" id="categoryCount"></span>
+                <button class="sec-clear" onclick="event.stopPropagation(); app.clearCategories()">clear</button>
+                <span class="filter-section-toggle collapsed">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.4" stroke-linecap="round">
+                        <path d="M6 9l6 6 6-6" />
+                    </svg>
+                </span>
+            </div>
+            <div id="categoriesList" class="filter-section-content collapsed">
+                <div class="fsec-search">
+                    <svg class="fs-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round">
+                        <circle cx="10.5" cy="10.5" r="6.5" />
+                        <path d="m15.4 15.4 4.2 4.2" />
+                    </svg>
+                    <input type="text" id="categoriesSearch" placeholder="Filter categories" autocomplete="off">
+                </div>
+                <div class="fsec-body" id="categoriesBody">
+                    <div class="fsec-empty">Select a library to load categories</div>
+                </div>
+            </div>
+        </section>
     </aside>
 
     <div class="splitter" id="splitterLeft"></div>
@@ -2516,6 +2625,11 @@ body.chrome-collapsed .bottom-panel {
             </div>
 
             <div class="meta">
+                <div class="detail-section" id="detailCategorySection">
+                    <span class="detail-label">Category</span>
+                    <div class="detail-value" id="detailCategory"></div>
+                </div>
+
                 <div class="detail-section" id="detailSeriesSection">
                     <span class="detail-label">Series</span>
                     <span class="detail-value" id="detailSeries"></span>
@@ -2614,7 +2728,7 @@ document.addEventListener('keydown', function (e) {
     }
 });
 </script>
-<script src="app.js?v=45"></script>
+<script src="app.js?v=48"></script>
 </body>
 
 </html>

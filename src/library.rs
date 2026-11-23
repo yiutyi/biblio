@@ -178,6 +178,7 @@ impl LibraryCache {
 
     /// Load (or reload) libraries. `force_snapshot` refreshes local database
     /// snapshots even when the source looks unchanged.
+    #[allow(dead_code)] // legacy single-path entry point
     pub fn load_libraries(
         &mut self,
         base_path: &Path,
@@ -187,9 +188,48 @@ impl LibraryCache {
     ) -> std::io::Result<()> {
         let scanner = LibraryScanner::new(base_path, store, snapshot_mode, force_snapshot);
         let libraries = scanner.scan()?;
+        self.register_libraries(libraries)
+    }
+
+    /// Load libraries from an explicit list of (name, path) entries.
+    /// Each entry may be a library folder, a parent folder of libraries, or a
+    /// direct path to metadata.db. Duplicate libraries (same metadata.db path)
+    /// are loaded once; the first entry wins.
+    pub fn load_named_libraries(
+        &mut self,
+        entries: &[(String, String)],
+        store: Arc<CacheStore>,
+        snapshot_mode: String,
+        force_snapshot: bool,
+    ) -> std::io::Result<()> {
+        let mut libraries: Vec<LibraryMetadata> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for (name, path) in entries {
+            let scanner = LibraryScanner::new(path, store.clone(), snapshot_mode.clone(), force_snapshot);
+            match scanner.scan() {
+                Ok(mut found) => {
+                    for lib in found.drain(..) {
+                        let key = lib.metadata_db_path.clone();
+                        if !seen.insert(key) {
+                            continue;
+                        }
+                        let mut lib = lib;
+                        lib.name = name.clone();
+                        libraries.push(lib);
+                    }
+                }
+                Err(e) => error!("Failed to scan library '{}' at {:?}: {}", name, path, e),
+            }
+        }
+        libraries.sort_by(|a, b| a.name.cmp(&b.name));
+        self.register_libraries(libraries)
+    }
+
+    fn register_libraries(&mut self, libraries: Vec<LibraryMetadata>) -> std::io::Result<()> {
 
         for mut lib in libraries {
-            match CalibreDb::open(&lib.metadata_db_path) {
+            match CalibreDb::open_with_library(&lib.metadata_db_path, Some(&lib.path)) {
                 Ok(db) => {
                     // Warm the in-memory caches now so page requests are instant.
                     let started = Instant::now();

@@ -14,6 +14,7 @@ use crate::session;
 use crate::audit;
 #[allow(unused_imports)]
 use crate::rbac;
+use tracing::error;
 
 #[derive(Debug, Serialize)]
 pub struct ApiResponse<T> {
@@ -31,6 +32,8 @@ pub struct FilterQuery {
     pub authors: Option<String>,
     pub tags: Option<String>,
     pub series: Option<String>,
+    /// Primary classification names joined with '|'
+    pub categories: Option<String>,
     /// recent (default, newest first) | title | author | series
     pub sort: Option<String>,
     pub offset: Option<usize>,
@@ -77,6 +80,7 @@ pub async fn get_books(
     let authors = split_list(&query.authors);
     let tags = split_list(&query.tags);
     let series = split_list(&query.series);
+    let categories = split_list(&query.categories);
     let sort = query.sort.clone().unwrap_or_else(|| "recent".to_string());
 
     // Filtering/sorting 123k rows is CPU work; keep it off the async workers.
@@ -103,7 +107,8 @@ pub async fn get_books(
                 || !authors.is_empty()
                 || !tags.is_empty()
                 || !series.is_empty()
-                || !formats.is_empty();
+                || !formats.is_empty()
+                || !categories.is_empty();
 
             // Fast path: no filters. The ordering is precomputed, so a page is
             // just a slice of indices - no per-request sorting at all.
@@ -186,6 +191,16 @@ pub async fn get_books(
                 });
             }
 
+            if !categories.is_empty() {
+                filtered.retain(|&i| {
+                    books[i]
+                        .category
+                        .as_ref()
+                        .map(|c| categories.iter().any(|sel| c.eq_ignore_ascii_case(sel)))
+                        .unwrap_or(false)
+                });
+            }
+
             if sort != "recent" {
                 let set = db
                     .lock()
@@ -226,6 +241,218 @@ pub async fn get_books(
             error: Some(message),
         })),
         Err(e) => Ok(HttpResponse::InternalServerError().json(ApiResponse::<Vec<Book>> {
+            success: false,
+            data: None,
+            error: Some(format!("Blocking task failed: {}", e)),
+        })),
+    }
+}
+
+/// A book plus the library it came from. `Book.id` is only unique within one
+/// Calibre library, so cross-library results must carry the source id.
+#[derive(Debug, Serialize)]
+pub struct ScopedBook {
+    #[serde(flatten)]
+    pub book: Book,
+    pub library_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScopedBooksPage<'a> {
+    pub success: bool,
+    pub data: &'a [ScopedBook],
+    pub total: usize,
+    pub offset: usize,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MultiFilterQuery {
+    /// Library ids joined with '|'. Omitted or empty means all libraries.
+    pub libs: Option<String>,
+    pub formats: Option<String>,
+    pub search: Option<String>,
+    pub authors: Option<String>,
+    pub tags: Option<String>,
+    pub series: Option<String>,
+    pub categories: Option<String>,
+    pub sort: Option<String>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+fn title_sort_key(b: &Book) -> String {
+    b.sort.clone().unwrap_or_else(|| b.title.clone()).to_lowercase()
+}
+
+fn author_sort_key(b: &Book) -> String {
+    b.authors.first().map(|a| a.to_lowercase()).unwrap_or_default()
+}
+
+fn series_sort_key(b: &Book) -> (String, i64) {
+    (
+        b.series
+            .as_ref()
+            .map(|s| s.to_lowercase())
+            .unwrap_or_else(|| "\u{10FFFF}".to_string()),
+        b.series_index.map(|x| (x * 1000.0) as i64).unwrap_or(i64::MAX),
+    )
+}
+
+/// Search/browse across any subset of libraries in one request.
+pub async fn get_books_multi(
+    cache: web::Data<RwLock<LibraryCache>>,
+    query: web::Query<MultiFilterQuery>,
+) -> Result<HttpResponse> {
+    let query = query.into_inner();
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let offset = query.offset.unwrap_or(0);
+    let sort = query.sort.clone().unwrap_or_else(|| "recent".to_string());
+    let formats = split_list(&query.formats);
+    let authors = split_list(&query.authors);
+    let tags = split_list(&query.tags);
+    let series = split_list(&query.series);
+    let categories = split_list(&query.categories);
+    let needle = query
+        .search
+        .as_ref()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty());
+    let requested: Vec<String> = query
+        .libs
+        .as_ref()
+        .map(|v| {
+            v.split('|')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let work = {
+        let cache = cache.clone();
+        web::block(move || -> std::result::Result<(Vec<ScopedBook>, usize), String> {
+            let dbs: Vec<_> = {
+                let guard = cache.read().unwrap();
+                let ids: Vec<String> = if requested.is_empty() {
+                    guard.get_libraries().into_iter().map(|l| l.id).collect()
+                } else {
+                    requested
+                };
+                ids.into_iter()
+                    .filter_map(|id| guard.get_database(&id).map(|db| (id, db)))
+                    .collect()
+            };
+            if dbs.is_empty() {
+                return Err("Library not found".to_string());
+            }
+
+            let filtering = needle.is_some()
+                || !authors.is_empty()
+                || !tags.is_empty()
+                || !series.is_empty()
+                || !formats.is_empty()
+                || !categories.is_empty();
+
+            let mut all: Vec<ScopedBook> = Vec::new();
+            for (lib_id, db) in dbs {
+                let books = db
+                    .lock()
+                    .unwrap()
+                    .get_all_books()
+                    .map_err(|e| e.to_string())?;
+                let idx = if filtering {
+                    Some(db.lock().unwrap().book_index().map_err(|e| e.to_string())?)
+                } else {
+                    None
+                };
+
+                for (i, book) in books.iter().enumerate() {
+                    if let Some(idx) = &idx {
+                        if let Some(n) = &needle {
+                            if !idx.search[i].contains(n) {
+                                continue;
+                            }
+                        }
+                        if !authors.is_empty()
+                            && !idx.authors[i].iter().any(|a| authors.iter().any(|sel| a == sel))
+                        {
+                            continue;
+                        }
+                        if !tags.is_empty()
+                            && !idx.tags[i].iter().any(|t| tags.iter().any(|sel| t == sel))
+                        {
+                            continue;
+                        }
+                        if !series.is_empty()
+                            && !idx.series[i]
+                                .as_ref()
+                                .map(|s| series.iter().any(|sel| s == sel))
+                                .unwrap_or(false)
+                        {
+                            continue;
+                        }
+                        if !formats.is_empty()
+                            && !idx.formats[i].iter().any(|f| formats.iter().any(|sel| f == sel))
+                        {
+                            continue;
+                        }
+                        if !categories.is_empty()
+                            && !book
+                                .category
+                                .as_ref()
+                                .map(|c| categories.iter().any(|sel| c.eq_ignore_ascii_case(sel)))
+                                .unwrap_or(false)
+                        {
+                            continue;
+                        }
+                    }
+                    all.push(ScopedBook {
+                        book: book.clone(),
+                        library_id: lib_id.clone(),
+                    });
+                }
+            }
+
+            // Per-library sort ranks are not comparable, so sort the merged set
+            // by field values. Calibre timestamps share one string shape, so a
+            // plain descending compare gives the same "recent" order.
+            match sort.as_str() {
+                "title" => all.sort_by_cached_key(|s| title_sort_key(&s.book)),
+                "author" => all.sort_by_cached_key(|s| author_sort_key(&s.book)),
+                "series" => all.sort_by_cached_key(|s| series_sort_key(&s.book)),
+                _ => all.sort_by(|a, b| b.book.timestamp.cmp(&a.book.timestamp)),
+            }
+
+            let total = all.len();
+            let page = all.into_iter().skip(offset).take(limit).collect();
+            Ok((page, total))
+        })
+        .await
+    };
+
+    match work {
+        Ok(Ok((page, total))) => Ok(HttpResponse::Ok().json(ScopedBooksPage {
+            success: true,
+            data: &page,
+            total,
+            offset,
+            error: None,
+        })),
+        Ok(Err(message)) if message == "Library not found" => {
+            Ok(HttpResponse::NotFound().json(ApiResponse::<Vec<ScopedBook>> {
+                success: false,
+                data: None,
+                error: Some(message),
+            }))
+        }
+        Ok(Err(message)) => Ok(HttpResponse::InternalServerError().json(ApiResponse::<Vec<ScopedBook>> {
+            success: false,
+            data: None,
+            error: Some(message),
+        })),
+        Err(e) => Ok(HttpResponse::InternalServerError().json(ApiResponse::<Vec<ScopedBook>> {
             success: false,
             data: None,
             error: Some(format!("Blocking task failed: {}", e)),
@@ -479,13 +706,66 @@ pub async fn get_format_stats(
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct CategoryStat {
+    pub name: String,
+    pub count: usize,
+}
+
+pub async fn get_categories(
+    cache: web::Data<RwLock<LibraryCache>>,
+    path: web::Path<String>,
+) -> Result<HttpResponse> {
+    let library_id = path.into_inner();
+    let db = {
+        let guard = cache.read().unwrap();
+        guard.get_database(&library_id)
+    };
+
+    if let Some(db) = db {
+        let stats = web::block(move || db.lock().unwrap().category_stats()).await;
+        match stats {
+            Ok(Ok(stats)) => {
+                let data: Vec<CategoryStat> = stats
+                    .iter()
+                    .map(|(name, count)| CategoryStat {
+                        name: name.clone(),
+                        count: *count,
+                    })
+                    .collect();
+                Ok(HttpResponse::Ok().json(ApiResponse {
+                    success: true,
+                    data: Some(data),
+                    error: None,
+                }))
+            }
+            Ok(Err(e)) => Ok(HttpResponse::InternalServerError().json(ApiResponse {
+                success: false,
+                data: None as Option<Vec<CategoryStat>>,
+                error: Some(format!("Database error: {}", e)),
+            })),
+            Err(e) => Ok(HttpResponse::InternalServerError().json(ApiResponse {
+                success: false,
+                data: None as Option<Vec<CategoryStat>>,
+                error: Some(format!("Blocking task failed: {}", e)),
+            })),
+        }
+    } else {
+        Ok(HttpResponse::NotFound().json(ApiResponse {
+            success: false,
+            data: None as Option<Vec<CategoryStat>>,
+            error: Some("Library not found".to_string()),
+        }))
+    }
+}
+
 pub async fn get_tags(
     cache: web::Data<RwLock<LibraryCache>>,
     path: web::Path<String>,
 ) -> Result<HttpResponse> {
     let library_id = path.into_inner();
     let cache = cache.read().unwrap();
-    
+
     if let Some(db) = cache.get_database(&library_id) {
         match db.lock().unwrap().get_all_tags() {
             Ok(tags) => {
@@ -724,7 +1004,14 @@ pub async fn refresh_libraries(
     cache: web::Data<RwLock<LibraryCache>>,
     store: web::Data<Arc<CacheStore>>,
 ) -> Result<HttpResponse> {
-    let library_path = config::library_path();
+    // Re-read config.yaml so library path edits take effect without restart.
+    if let Err(e) = config::reload() {
+        error!("Failed to reload configuration: {}", e);
+    }
+    let entries: Vec<(String, String)> = config::library_entries()
+        .into_iter()
+        .map(|e| (e.name, e.path))
+        .collect();
     let snapshot_mode = config::db_snapshot();
     let store = store.get_ref().clone();
 
@@ -735,12 +1022,7 @@ pub async fn refresh_libraries(
         web::block(move || -> std::io::Result<Vec<LibraryMetadata>> {
             let mut cache = cache.write().unwrap();
             cache.clear();
-            cache.load_libraries(
-                std::path::Path::new(&library_path),
-                store,
-                snapshot_mode,
-                true,
-            )?;
+            cache.load_named_libraries(&entries, store, snapshot_mode, true)?;
             Ok(cache.get_libraries())
         })
         .await
@@ -1720,12 +2002,14 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/admin/users/{username}/password", web::post().to(admin_change_password))
             .route("/admin/audit-logs", web::get().to(get_audit_logs))
             .route("/libraries", web::get().to(get_libraries))
+            .route("/books", web::get().to(get_books_multi))
             .route("/libraries/refresh", web::post().to(refresh_libraries))
             .route("/libraries/{id}", web::get().to(get_library))
             .route("/libraries/{id}/books", web::get().to(get_books))
             .route("/libraries/{id}/authors", web::get().to(get_authors))
             .route("/libraries/{id}/tags", web::get().to(get_tags))
             .route("/libraries/{id}/formats", web::get().to(get_format_stats))
+            .route("/libraries/{id}/categories", web::get().to(get_categories))
             .route("/libraries/{id}/series", web::get().to(get_series))
             .route("/libraries/{id}/books/{book_id}", web::get().to(get_book))
             .route("/libraries/{id}/books/{book_id}/cover", web::get().to(get_book_cover))
