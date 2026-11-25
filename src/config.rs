@@ -159,11 +159,31 @@ impl Config {
 static CONFIG: std::sync::OnceLock<Arc<Mutex<Config>>> = std::sync::OnceLock::new();
 static CONFIG_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
+/// Create `<path>` from `<path>.example` when missing. Never overwrites an
+/// existing file; silently skips when no example is bundled.
+fn bootstrap_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let target = std::path::Path::new(path);
+    if target.exists() {
+        return Ok(());
+    }
+    let example = format!("{}.example", path);
+    let example_path = std::path::Path::new(&example);
+    if !example_path.exists() {
+        return Ok(());
+    }
+    fs::copy(example_path, target)?;
+    info!("Created {} from {}", path, example);
+    Ok(())
+}
+
 /// Initialize the global configuration from the YAML file
 pub fn init(config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    bootstrap_file(config_path)?;
     let config = Config::load(config_path)?;
     let _ = CONFIG_PATH.set(config_path.to_string());
     info!("Configuration loaded from {}", config_path);
+
+    bootstrap_file(&config.users_file_path)?;
     
     // Determine and log which mode we're running in
     if std::env::var("APP_IN_DOCKER").unwrap_or_default() == "true" {
