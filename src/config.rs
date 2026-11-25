@@ -256,6 +256,86 @@ pub fn reload() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Replace the `library_paths` block in config.yaml without touching comments
+/// or other keys. All paths are validated before anything is written.
+pub fn set_library_paths(entries: &[LibraryEntry]) -> Result<(), Box<dyn std::error::Error>> {
+    let base = Config::get_base_dir();
+    for entry in entries {
+        if entry.name.trim().is_empty() {
+            return Err("Library name must not be empty".into());
+        }
+        let p = entry.path.trim();
+        if p.is_empty() {
+            return Err(format!("Library path must not be empty: {}", entry.name).into());
+        }
+        let resolved = Config::resolve_path(&base, p);
+        if !std::path::Path::new(&resolved).is_dir() {
+            return Err(format!("Directory does not exist for '{}': {}", entry.name, resolved).into());
+        }
+    }
+
+    let path = CONFIG_PATH
+        .get()
+        .ok_or("Configuration not initialized")?;
+    let contents = fs::read_to_string(path)?;
+
+    let mut out = String::with_capacity(contents.len());
+    let mut lines = contents.lines().peekable();
+    let mut replaced = false;
+    while let Some(line) = lines.next() {
+        let stripped = line.trim_start();
+        if !replaced && line == stripped && stripped.starts_with("library_paths:") {
+            if entries.is_empty() {
+                out.push_str("library_paths: []\n");
+            } else {
+                out.push_str("library_paths:\n");
+                for entry in entries {
+                    out.push_str("  - name: ");
+                    out.push_str(&yaml_scalar(entry.name.trim())?);
+                    out.push_str("\n    path: ");
+                    out.push_str(&yaml_scalar(entry.path.trim())?);
+                    out.push('\n');
+                }
+            }
+            out.push('\n');
+            replaced = true;
+            // Drop the old block up to the next top-level key/comment.
+            while let Some(&next) = lines.peek() {
+                let t = next.trim_start();
+                if t.starts_with('#') && next == t {
+                    break;
+                }
+                if next == t && !t.is_empty() {
+                    break;
+                }
+                lines.next();
+            }
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !replaced {
+        return Err("`library_paths` key not found in config.yaml".into());
+    }
+
+    // Write to a temp file and verify it before replacing the real config.
+    // fs::rename cannot overwrite an existing file on Windows, hence copy.
+    let tmp = path.clone() + ".tmp";
+    fs::write(&tmp, &out)?;
+    fs::read_to_string(&tmp)?;
+    fs::copy(&tmp, path)?;
+    let _ = fs::remove_file(&tmp);
+
+    *get().lock().unwrap() = Config::load(path)?;
+    info!("Updated {} configured librar(y|ies)", entries.len());
+    Ok(())
+}
+
+fn yaml_scalar(s: &str) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(serde_yaml_ng::to_string(s)?.trim_end().to_string())
+}
+
 pub fn service_ip_and_port() -> String {
     with(|cfg| cfg.service_ip_and_port.clone())
 }

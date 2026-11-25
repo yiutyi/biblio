@@ -1047,6 +1047,42 @@ pub async fn refresh_libraries(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LibraryPathsRequest {
+    pub libraries: Vec<config::LibraryEntry>,
+}
+
+pub async fn get_library_config() -> Result<HttpResponse> {
+    let data = config::with(|cfg| serde_json::json!({
+        "libraries": cfg.library_paths.clone(),
+        "fallback_active": cfg.library_paths.is_empty(),
+        "fallback_path": cfg.library_path.clone(),
+    }));
+    Ok(HttpResponse::Ok().json(ApiResponse {
+        success: true,
+        data: Some(data),
+        error: None,
+    }))
+}
+
+pub async fn update_library_paths(req: web::Json<LibraryPathsRequest>) -> Result<HttpResponse> {
+    match config::set_library_paths(&req.libraries) {
+        Ok(()) => Ok(HttpResponse::Ok().json(ApiResponse {
+            success: true,
+            data: Some(serde_json::json!({ "count": req.libraries.len() })),
+            error: None,
+        })),
+        Err(e) => {
+            error!("Failed to update library paths: {}", e);
+            Ok(HttpResponse::BadRequest().json(ApiResponse {
+                success: false,
+                data: None::<serde_json::Value>,
+                error: Some(e.to_string()),
+            }))
+        }
+    }
+}
+
 pub async fn login(
     req: web::Json<LoginRequest>,
     _users: web::Data<Vec<auth::User>>,
@@ -2004,6 +2040,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/libraries", web::get().to(get_libraries))
             .route("/books", web::get().to(get_books_multi))
             .route("/libraries/refresh", web::post().to(refresh_libraries))
+            .route("/config/libraries", web::get().to(get_library_config))
+            .route("/config/libraries", web::post().to(update_library_paths))
             .route("/libraries/{id}", web::get().to(get_library))
             .route("/libraries/{id}/books", web::get().to(get_books))
             .route("/libraries/{id}/authors", web::get().to(get_authors))

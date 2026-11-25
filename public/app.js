@@ -512,8 +512,24 @@ class BiblioApp {
 
     // Restore from cookie. Old cookies stored only currentLibraryId.
     async restoreLibrarySelection(savedState) {
+        const currentIds = new Set(this.libraries.map(l => l.id));
+        // Settings can remove libraries. Facet ids and the selected book from
+        // the old set no longer apply; drop them or the remaining library
+        // renders zero books under stale filters.
+        if (savedState && (savedState.selectedLibraryIds || []).some(id => !currentIds.has(id))) {
+            this.selectedAuthors.clear();
+            this.selectedTags.clear();
+            this.selectedSeries.clear();
+            this.selectedFormats.clear();
+            this.selectedCategories.clear();
+            this.searchTerm = '';
+            this.sortMethod = 'recent';
+            this.selectedBookId = null;
+            this.selectedBookLibraryId = null;
+            savedState = null;
+        }
         let ids = (savedState && savedState.selectedLibraryIds)
-            ? savedState.selectedLibraryIds.filter(id => this.libraries.some(l => l.id === id))
+            ? savedState.selectedLibraryIds.filter(id => currentIds.has(id))
             : [];
         if (!ids.length && savedState && savedState.currentLibraryId
             && this.libraries.some(l => l.id === savedState.currentLibraryId)) {
@@ -3281,6 +3297,136 @@ class BiblioApp {
             console.error('Error refreshing libraries:', error);
             this.updateStatus('Error refreshing libraries');
         }
+    }
+
+    /* ---------- Settings panel ---------- */
+    setTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('biblioTheme', theme);
+        this.refreshConfigUI();
+    }
+
+    setFont(font) {
+        document.documentElement.setAttribute('data-font', font);
+        localStorage.setItem('biblioFont', font);
+        this.refreshConfigUI();
+    }
+
+    setFontSize(size) {
+        document.documentElement.setAttribute('data-font-size', size);
+        localStorage.setItem('biblioFontSize', size);
+        this.refreshConfigUI();
+    }
+
+    refreshConfigUI() {
+        const root = document.documentElement;
+        const mark = (id, value) => {
+            document.querySelectorAll('#' + id + ' [data-value]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.value === value);
+            });
+        };
+        mark('cfgThemeOptions', root.getAttribute('data-theme') || 'light');
+        mark('cfgFontOptions', root.getAttribute('data-font') || 'system');
+        mark('cfgSizeOptions', root.getAttribute('data-font-size') || 'medium');
+    }
+
+    showConfig() {
+        this.refreshConfigUI();
+        document.getElementById('configModal').classList.add('open');
+        this.loadLibraryConfig();
+    }
+
+    closeConfig() {
+        const modal = document.getElementById('configModal');
+        if (modal) modal.classList.remove('open');
+    }
+
+    async loadLibraryConfig() {
+        const hint = document.getElementById('cfgLibraryHint');
+        if (hint) hint.textContent = '读取中…';
+        try {
+            const response = await fetch('/api/config/libraries');
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || '读取失败');
+            this.libraryConfig = data.data.libraries || [];
+            this.renderLibraryRows();
+            if (hint) {
+                hint.textContent = data.data.fallback_active
+                    ? '当前列表为空，将回退到 library_path：' + (data.data.fallback_path || '未设置')
+                    : '路径须为已存在的目录；相对路径按程序工作目录解析。删除全部书库后将回退到 library_path。';
+            }
+        } catch (err) {
+            if (hint) hint.textContent = '读取失败：' + err.message;
+        }
+    }
+
+    renderLibraryRows() {
+        const list = document.getElementById('cfgLibraryList');
+        if (!list) return;
+        list.innerHTML = '';
+        (this.libraryConfig || []).forEach((lib, i) => {
+            const row = document.createElement('div');
+            row.className = 'cfg-lib-row';
+            row.innerHTML =
+                '<input class="cfg-input cfg-lib-name" placeholder="名称" aria-label="书库名称">' +
+                '<input class="cfg-input cfg-lib-path" placeholder="目录路径" aria-label="书库路径">' +
+                '<button class="cfg-btn cfg-lib-del" title="删除" aria-label="删除">✕</button>';
+            row.querySelector('.cfg-lib-name').value = lib.name || '';
+            row.querySelector('.cfg-lib-path').value = lib.path || '';
+            row.querySelector('.cfg-lib-del').onclick = () => this.removeLibraryEntry(i);
+            list.appendChild(row);
+        });
+    }
+
+    collectLibraryRows() {
+        const list = document.getElementById('cfgLibraryList');
+        if (!list) return [];
+        return Array.from(list.querySelectorAll('.cfg-lib-row')).map(row => ({
+            name: row.querySelector('.cfg-lib-name').value.trim(),
+            path: row.querySelector('.cfg-lib-path').value.trim()
+        }));
+    }
+
+    addLibraryEntry() {
+        const entries = this.collectLibraryRows();
+        entries.push({ name: '', path: '' });
+        this.libraryConfig = entries;
+        this.renderLibraryRows();
+        const paths = document.querySelectorAll('#cfgLibraryList .cfg-lib-path');
+        const last = paths[paths.length - 1];
+        if (last) last.focus();
+    }
+
+    removeLibraryEntry(index) {
+        const entries = this.collectLibraryRows();
+        entries.splice(index, 1);
+        this.libraryConfig = entries;
+        this.renderLibraryRows();
+    }
+
+    async saveLibraries() {
+        const libraries = this.collectLibraryRows().filter(l => l.name || l.path);
+        const invalid = libraries.find(l => !l.name || !l.path);
+        if (invalid) {
+            this.showToast('每个书库的名称和路径都不能为空');
+            return;
+        }
+        try {
+            const response = await fetch('/api/config/libraries', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ libraries })
+            });
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || '保存失败');
+            this.showToast('书库配置已保存，正在重新加载…');
+        } catch (err) {
+            this.showToast('保存失败：' + err.message);
+            return;
+        }
+        // Refresh is separate: a refresh error must not be reported as a save error.
+        await this.refreshLibraries();
+        await this.loadLibraryConfig();
     }
 
     showAbout() {
